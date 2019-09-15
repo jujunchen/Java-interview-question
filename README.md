@@ -7,32 +7,34 @@
 
 ##### 1.2 常见的集合
 
-HashMap 1.7 和 1.8 的区别
+HashMap 1.7 和 1.8 的区别  
 ##### 1.3 并发
-Synchronized原理
-HashMap在并发下会产生什么问题？有什么替代方案?(HashTable, ConcurrentHashMap)。它们两者的实现原理。
-ThreadLocal 子类及原理, OOM产生原因及防治
-Java8新增的原子操作类
-ConcurrentLinkedQueue、LinkedBlockingQueue、ArrayBlockingQueue、PriorityBlockingQueue、DelayQueue、SynchronousQueue、LinkedBlockingDeque、LinkedTransferQueue
-ThreadPoolExecutor构造函数有哪几个参数，实现原理，创建线程池的方式
-为什么建议在不用线程池的时候，关闭线程池，线程池的作用就是复用线程的
-Timer 和 ScheduledThreadPoolExecutor 区别
-CountDownLatch原理、CyclicBarrier原理，两者区别
-Semaphore 原理
-Exchanger 原理
-如何实现一个生产者与消费者模型
+Synchronized原理  
+HashMap在并发下会产生什么问题？有什么替代方案?(HashTable, ConcurrentHashMap)。它们两者的实现原理。  
+ThreadLocal 子类及原理, OOM产生原因及防治  
+Java8新增的原子操作类  
+ConcurrentLinkedQueue、LinkedBlockingQueue、ArrayBlockingQueue、PriorityBlockingQueue、DelayQueue、SynchronousQueue、  LinkedBlockingDeque、LinkedTransferQueue  
+ThreadPoolExecutor构造函数有哪几个参数，实现原理，创建线程池的方式  
+为什么建议在不用线程池的时候，关闭线程池，线程池的作用就是复用线程的  
+Timer 和 ScheduledThreadPoolExecutor 区别  
+CountDownLatch原理、CyclicBarrier原理，两者区别  
+Semaphore 原理  
+Exchanger 原理  
+如何实现一个生产者与消费者模型  
+
 ##### 1.4 锁
-自旋锁、自适应自旋、锁消除、锁粗化、轻量级锁、偏向锁
-公平锁、非公平锁
-AbstractQueuedSynchronizer的作用
-JDK8新增的锁
+自旋锁、自适应自旋、锁消除、锁粗化、轻量级锁、偏向锁  
+公平锁、非公平锁  
+AbstractQueuedSynchronizer的作用  
+JDK8新增的锁  
+
 ##### 1.5 JVM
-JVM运行时内存区域划分
-OOM,及SOE的示例、原因，排查方法
-如何判断对象可以回收或存活
-常见的GC算法
-常见的JVM性能监测分析工具
-JVM优化
+JVM运行时内存区域划分  
+OOM,及SOE的示例、原因，排查方法  
+如何判断对象可以回收或存活  
+常见的GC算法  
+常见的JVM性能监测分析工具  
+JVM优化  
 什么时候会触发FullGC
 类加载器有几种
 什么是双亲委派模型？双亲委派模型的破坏

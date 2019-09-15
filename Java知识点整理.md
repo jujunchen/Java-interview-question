@@ -77,9 +77,14 @@
 
 
 ##### ThreadLocal 子类及原理, OOM产生原因及防治
-> http://note.youdao.com/noteshare?id=0674afc7075f1a086b6abff17762b3de
-> OOM原因及防治  
-> ThreadLocal只是一个工具类，具体存放变量的是线程的threadLocals变量，threadLocals是一个ThreadLocalMap类型的变量，内部是一个Entry数组，Entry继承自WeakReference,Entry内部的value用来存放通过ThreadLocal的set方法传递的值,key是ThreadLocal的弱引用，key虽然会被GC回收，但value不能被回收，这时候ThreadLocalMap中会存在key为null，value不为null的entry项，如果时间长了就会存在大量无用对象，造成OOM。虽然set,get也提供了一些对Entry项清理的时机，但不及时，所以在使用完毕后需要及时调用remove
+- InheritableThreadLocal 
+
+     继承了ThreadLocal，并重写childValue、getMap、createMap，对该类的操作实际上是对线程ThreadLocalMap的操作
+
+    子线程能够读取父线程数据，实际原因是新建子线程的时候，会从父线程copy数据
+
+- OOM原因及防治  
+ ThreadLocal只是一个工具类，具体存放变量的是线程的threadLocals变量，threadLocals是一个ThreadLocalMap类型的变量，内部是一个Entry数组，Entry继承自WeakReference,Entry内部的value用来存放通过ThreadLocal的set方法传递的值,key是ThreadLocal的弱引用，key虽然会被GC回收，但value不能被回收，这时候ThreadLocalMap中会存在key为null，value不为null的entry项，如果时间长了就会存在大量无用对象，造成OOM。虽然set,get也提供了一些对Entry项清理的时机，但不及时，所以在使用完毕后需要及时调用remove
 
 
 ##### Java8新增的原子操作类

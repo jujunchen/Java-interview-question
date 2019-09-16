@@ -1162,11 +1162,37 @@ SOA即面向服务架构，关注点是服务，现有的分布式服务化技�
 
 ##### Dubbo SPI的理解
 
+Dubbo SPI 跟Java SPI很相似，Java SPI是Java内置的一种服务提供发现功能，一种动态替换发现机制。
+
+Java  SPI使用方法：
+
+1. 在META-INF/services 目录下放置配置文件，文件名是接口全路径名，文件内部是要实现接口的实现类全路径名，编码用UTF-8
+2. 使用ServiceLoad.load(xx.class)调用
+
+Dubbo比Java 增加了：
+
+1. 可以方便地获取某一个想要的扩展实现
+2. 对于扩展实现IOC依赖注入功能
+3. @SPI声明一个扩展接口，@Adaptive用在方法上，表示自动生成和编译一个动态的Adaptive类，如果用在类上表示一个装饰模式的类
+
+Dubbo  通过ExtensionLoader.getExtensionLoader(Protocol.class).getAdaptiveExtension()方法进行加载，每个SPI接口(@SPI注解的接口)都会产生一个ExtensionLoader扩展加载器实例，保存在名为EXTENSION_LOADERS的ConcureentMap中，通过扩展加载器调用getAdaptiveExtension()方法来获得自适应对象，并注入对象依赖属性
+
 
 
 ##### Dubbo 基本原理、执行流程
 
+基本原理
 
+
+
+执行流程
+
+1. 服务容器Container负责启动加载运行服务提供者Provider，根据Provider配置文件根据协议发布服务，完成服务初始化
+2. 在Provider（服务提供者）启动时，根据配置中的Registry地址连接注册中心，将Provider的服务信息发布到注册中心
+3. Consumer（消费者）启动时，根据消费者配置文件中的服务引用信息，连接到注册中心，向注册中心订阅自己所需的服务
+4. 注册中心根据服务订阅关系，返回Provider地址列表给Consumer，如果有变更，注册中心会推送最新的服务地址信息给Consumer
+5. Consumer调用远程服务时，根据路由策略，先从缓存的Provider地址列表中选择一台进行，跨进程调用服务，假如调用失败，再重新选择其他调用
+6. 服务Provider和Consumer,会在内存中记录调用次数和调用时间，每分钟发送一次统计数据到Monitor
 
 
 

@@ -230,7 +230,7 @@
 
 #### 交流平台
 
-<img src="media/image-20191114203913199.png" alt="image-20191114203913199" style="zoom:50%;" />
+![image-20191114204200585](media/image-20191114204200585.png)
 
 
 

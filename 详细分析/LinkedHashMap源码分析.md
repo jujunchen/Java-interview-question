@@ -31,7 +31,7 @@ public void test(){
 
 调试可以看到 `map` 的组成：
 
-[![img](media/5cd1ba2adf7c0.jpg)](https://i.loli.net/2019/05/08/5cd1ba2adf7c0.jpg)
+![img](media/5cd1ba2adf7c0-20191214003715601.jpg)
 
 打开源码可以看到：
 
@@ -65,7 +65,7 @@ private static class Entry<K,V> extends HashMap.Entry<K,V> {
 
 上边的 demo 总结成一张图如下：
 
-[![img](media/5cd1ba2d418b6.jpg)](https://i.loli.net/2019/05/08/5cd1ba2d418b6.jpg)
+![img](media/5cd1ba2d418b6-20191214003733877.jpg)
 
 第一个类似于 `HashMap` 的结构，利用 `Entry` 中的 `next` 指针进行关联。
 

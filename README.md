@@ -19,7 +19,7 @@
 ### 电子书
 `愿在编程的道路上，越走越远，一起共勉`
 
-https://github.com/jujunchen/eboo
+https://github.com/jujunchen/ebook
     
 #### 交流平台
 

@@ -20,7 +20,11 @@
 `愿在编程的道路上，越走越远，一起共勉`
 
 https://github.com/jujunchen/ebook
-    
+
+    ###视频资料
+
+[视频资料地址](https://github.com/jujunchen/Java-interview-question/tree/master/学习资料)
+
 #### 交流平台
 
 ![image-20191114204200585](media/image-20191114204200585.png)

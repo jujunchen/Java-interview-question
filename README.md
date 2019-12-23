@@ -27,7 +27,7 @@ https://github.com/jujunchen/ebook
 
 #### 交流平台
 
-![image-20191114204200585](media/image-20191114204200585.png)
+![image-20191114204200585](https://tva1.sinaimg.cn/large/006tNbRwly1ga6zjor75uj30b9072gnk.jpg)
 
 
 

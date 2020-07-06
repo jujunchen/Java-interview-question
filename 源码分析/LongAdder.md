@@ -121,7 +121,7 @@ final boolean casBase(long cmp, long val) {
 }
 ```
 
-看一下UNSAFE中compareAndSwapLong的代码
+看一下UNSAFE中compareAndSwapLong的C++代码
 
 ```c++
 jboolean
@@ -196,7 +196,8 @@ static final int advanceProbe(int probe) {
 
 ```java
 /**
-*  x 表示更新的值；fn表示操作函数，在LongAdder中为null，LongAccumulator中为自定义函数；wasUncontended表示CAS是否已*  经更新失败
+*  x 表示更新的值；fn表示操作函数，在LongAdder中为null，LongAccumulator中为自定义函数；wasUncontended表示CAS是否
+*  已经更新失败,false表示失败，说明有竞争，true表示成功
 */
 final void longAccumulate(long x, LongBinaryOperator fn,
                           boolean wasUncontended) {
@@ -205,12 +206,15 @@ final void longAccumulate(long x, LongBinaryOperator fn,
     if ((h = getProbe()) == 0) {
         ThreadLocalRandom.current(); 
         h = getProbe();
+        //true表示没有竞争
         wasUncontended = true;
     }
+    //一个碰撞标记，false表示没有发生碰撞
     boolean collide = false; 
     for (;;) {
         Cell[] as; Cell a; int n; long v;
         //cells数组不为null，并且长度大于0，表示已经初始化
+        //如下else if语句 如果其中一个为true，即会跳到advanceProbe()进行重写hash计算
         if ((as = cells) != null && (n = as.length) > 0) {
             //当前线程映射的索引处为null,将关联新的Cell
             if ((a = as[(n - 1) & h]) == null) {
@@ -218,70 +222,98 @@ final void longAccumulate(long x, LongBinaryOperator fn,
                 if (cellsBusy == 0) {  
                     //创建包含更新值x的Cell
                     Cell r = new Cell(x);
-                    //再次判断是否有其他线程操作cells
+                    //再次判断是否有其他线程操作cells，没有的话，CAS将cellsBusy从0修改为1，成功表示获取到锁
                     if (cellsBusy == 0 && casCellsBusy()) {
+                        //是否已成功关联的标识
                         boolean created = false;
-                        try {               // Recheck under lock
+                        try {
                             Cell[] rs; int m, j;
+                            //再次检查索引处的槽是否为null
                             if ((rs = cells) != null &&
                                 (m = rs.length) > 0 &&
                                 rs[j = (m - 1) & h] == null) {
+                                //关联新的Cell到该空闲的槽
                                 rs[j] = r;
+                                //成功关联
                                 created = true;
                             }
                         } finally {
+                            //释放锁
                             cellsBusy = 0;
                         }
+                        //成功关联了，就跳出循环结束
                         if (created)
                             break;
-                        continue;           // Slot is now non-empty
+                        //继续尝试
+                        continue;           
                     }
                 }
                 collide = false;
             }
-            else if (!wasUncontended)       // CAS already known to fail
-                wasUncontended = true;      // Continue after rehash
+            //之前CAS操作已经失败，wasUncontended=false，false说明存在竞争，true说明不存在竞争
+            else if (!wasUncontended)
+                //重新rehash后继续
+                wasUncontended = true;     
+            //CAS更新当前槽，fn==null只做加法，否则运用fn函数计算更新值
             else if (a.cas(v = a.value, ((fn == null) ? v + x :
                                          fn.applyAsLong(v, x))))
+                //更新成功跳出循环，结束
                 break;
+            //cells长度大于等于CPU数量，cells!=as 表示已经发生了扩容
             else if (n >= NCPU || cells != as)
-                collide = false;            // At max size or stale
+                collide = false; 
+            //如果不存在冲突，则设置为存在冲突
+            //为什么要这么做？看前面的代码collide=false时，一种是cellsBusy==1时，表示有其他线程在操作Cell，
+            //一种是n>= NCPU || cells != as 两种情况都需要进行rehash,不需要再继续执行扩容，只需要再次重试
             else if (!collide)
                 collide = true;
+            //扩容
             else if (cellsBusy == 0 && casCellsBusy()) {
                 try {
-                    if (cells == as) {      // Expand table unless stale
+                    //cells的地址没有改变，表示没有进行过扩容
+                    if (cells == as) {
+                        //新数组长度为n*2
                         Cell[] rs = new Cell[n << 1];
+                        //赋值元素
                         for (int i = 0; i < n; ++i)
                             rs[i] = as[i];
+                        //关联地址
                         cells = rs;
                     }
                 } finally {
+                    //释放锁
                     cellsBusy = 0;
                 }
                 collide = false;
-                continue;                   // Retry with expanded table
+                //扩容后，重试
+                continue;                   
             }
+            //重新rehash
             h = advanceProbe(h);
         }
+        //这种情况是，表还没有初始化
         else if (cellsBusy == 0 && cells == as && casCellsBusy()) {
             boolean init = false;
             try {                           // Initialize table
                 if (cells == as) {
+                    //初始长度为2
                     Cell[] rs = new Cell[2];
                     rs[h & 1] = new Cell(x);
                     cells = rs;
                     init = true;
                 }
             } finally {
+                //释放锁
                 cellsBusy = 0;
             }
+            //初始化完，跳出循环，结束
             if (init)
                 break;
         }
+        //后备操作，获取锁失败，使用base操作
         else if (casBase(v = base, ((fn == null) ? v + x :
                                     fn.applyAsLong(v, x))))
-            break;                          // Fall back on using base
+            break;                          
     }
 }
 ```

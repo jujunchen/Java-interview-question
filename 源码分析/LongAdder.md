@@ -7,7 +7,7 @@ LongAdder 继承自Striped64，并实现了Serializable序列化接口。
 
 Striped64 继承自Number，重写了longValue,intValue,floatValue,doubleValue
 
-<img src="https://tva1.sinaimg.cn/large/007S8ZIlly1ggh62pe1dgj30ki0mgdhu.jpg" alt="image-20200706130244235" style="zoom:50%;" />
+![111](https://tva1.sinaimg.cn/large/007S8ZIlly1ggiavs03zjj30nd0d8jse.jpg)
 
 ## Striped64
 
@@ -549,6 +549,8 @@ public void accumulate(long x) {
 
 获取函数计算后的值，将所有的Cell通过函数计算后返回
 
+同样，在多线程下有问题，计算不精确
+
 ```java
 public long get() {
     Cell[] as = cells; Cell a;
@@ -584,6 +586,8 @@ public void reset() {
 
 将所有Cell的value值通过函数计算后，返回结果，并重置Cell的value值为初始值
 
+同样，在多线程下有问题，计算不精确
+
 ```java
 public long getThenReset() {
     Cell[] as = cells; Cell a;
@@ -603,3 +607,8 @@ public long getThenReset() {
 ```
 
 该类的其他方法类同LongAdder
+
+## DoubleAdder、DoubleAccumulator
+
+这两个类同样继承自Striped64，只是Double的表现形式，内部实现同LongAdder、LongAccumulator
+

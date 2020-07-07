@@ -1,5 +1,6 @@
-# LongAdder 源码分析
+# Striped64、LongAdder、LongAccumulator 源码分析
 
+[TOC]
 > LongAdder 的作者是Doug Lea大神，该类原本在Guava工具包中，后来被Java8吸收，以下源码基于Java8
 
 LongAdder 继承自Striped64，并实现了Serializable序列化接口。
@@ -320,23 +321,283 @@ final void longAccumulate(long x, LongBinaryOperator fn,
 
 ## LongAdder
 
-继承了Striped64，分析以下该类的每个方法
-
 ### add
 
-增加给定值x
+增加给定值x，首先会尝试更新base字段，如果更新失败，更新线程映射槽Cell的value字段
 
 ```java
 public void add(long x) {
     Cell[] as; long b, v; int m; Cell a;
-    //
+    //如果cells = null, 就会执行casBase
+    //如果cells不为空，或者base变量CAS更新失败，说明产生竞争
     if ((as = cells) != null || !casBase(b = base, b + x)) {
         boolean uncontended = true;
+        //as == null || (m = as.length - 1) < 0 此时说明还未初始化，需要初始化
+        //(a = as[getProbe() & m]) == null 此时说明当前线程映射的槽为空，需要创建新的Cell并关联
+        //!(uncontended = a.cas(v = a.value, v + x)) 此时说明该位置的槽不为空，但value更新失败，说明有竞争
+        //需要换槽
         if (as == null || (m = as.length - 1) < 0 ||
             (a = as[getProbe() & m]) == null ||
             !(uncontended = a.cas(v = a.value, v + x)))
+            //做初始化，扩容，创建新的Cell和处理竞争问题
             longAccumulate(x, null, uncontended);
     }
 }
 ```
 
+### increment、decrement
+
+```java
+/**
+ * 递增1，相当于add(1)
+ */
+public void increment() {
+    add(1L);
+}
+
+/**
+ * 递减-1，相当于add(-1)
+ */
+public void decrement() {
+    add(-1L);
+}
+```
+
+### sum
+
+获取累加值，base+所有Cell的value值。由于在做累加的时候，没有加锁，可能期间其他线程对Cell中的value 进行修改，所以累加的值是一个原子快照值
+
+```java
+public long sum() {
+    Cell[] as = cells; Cell a;
+    long sum = base;
+    if (as != null) {
+        //循环cells数组，累加value
+        for (int i = 0; i < as.length; ++i) {
+            if ((a = as[i]) != null)
+                sum += a.value;
+        }
+    }
+    return sum;
+}
+```
+
+### reset
+
+重置base，Cell中的value值为0
+
+```java
+public void reset() {
+    Cell[] as = cells; Cell a;
+    base = 0L;
+    if (as != null) {
+        for (int i = 0; i < as.length; ++i) {
+            if ((a = as[i]) != null)
+                a.value = 0L;
+        }
+    }
+}
+```
+
+### sumThenReset
+
+累加值，并重置base，即Cell中的值为0。在多线程下有问题，可能第一个线程做累加，并重置为0，第二个线程累加调用的值都变为0
+
+```java
+public long sumThenReset() {
+    Cell[] as = cells; Cell a;
+    long sum = base;
+    base = 0L;
+    if (as != null) {
+        for (int i = 0; i < as.length; ++i) {
+            if ((a = as[i]) != null) {
+                sum += a.value;
+                a.value = 0L;
+            }
+        }
+    }
+    return sum;
+}
+```
+
+### toString、longValue、intValue、floatValue、doubleValue
+
+这些方法都调用sum()方法，返回累加值
+
+```java
+/**
+ * Returns the String representation of the {@link #sum}.
+ * @return the String representation of the {@link #sum}
+ */
+public String toString() {
+    return Long.toString(sum());
+}
+
+/**
+ * Equivalent to {@link #sum}.
+ *
+ * @return the sum
+ */
+public long longValue() {
+    return sum();
+}
+
+/**
+ * Returns the {@link #sum} as an {@code int} after a narrowing
+ * primitive conversion.
+ */
+public int intValue() {
+    return (int)sum();
+}
+
+/**
+ * Returns the {@link #sum} as a {@code float}
+ * after a widening primitive conversion.
+ */
+public float floatValue() {
+    return (float)sum();
+}
+
+/**
+ * Returns the {@link #sum} as a {@code double} after a widening
+ * primitive conversion.
+ */
+public double doubleValue() {
+    return (double)sum();
+}
+```
+
+### SerializationProxy
+
+序列化代理类，其可以阻止伪字节流的攻击，以及内部域的盗用攻击
+
+详见：[考虑用序列化代理代替序列化实例](https://blog.csdn.net/xujiajun945/article/details/84245471)
+
+## LongAccumulator
+
+该类同样继承了Striped64,实现了序列化接口
+
+LongAccumulator 相比LongAdder,可以为累加器提供非0的初始值，后者只能提供默认为0的值，另外前者可以提供自定义函数，指定运算规则，后者只能进行累加运算。
+
+LongAdder就相当于用LongAccumulator这样写，初始值为0，两数累加
+
+`LongAccumulator longAccumulator1 = new LongAccumulator((x,y) -> x + y, 0);`
+
+### 构造函数，属性
+
+```java
+//函数式接口
+private final LongBinaryOperator function;
+//初始值
+private final long identity;
+
+/**
+ * 使用给定的函数接口，和初始值创建实例
+ */
+public LongAccumulator(LongBinaryOperator accumulatorFunction,
+                       long identity) {
+    this.function = accumulatorFunction;
+    base = this.identity = identity;
+}
+```
+
+```java
+@FunctionalInterface
+public interface LongBinaryOperator {
+
+    /**
+     * 根据两个参数计算并返回结果
+     *
+     * @param left the first operand
+     * @param right the second operand
+     * @return the operator result
+     */
+    long applyAsLong(long left, long right);
+}
+```
+
+### accumulate
+
+根据给定值x做计算，该方法类似[Longadder#add](#add)
+
+```java
+public void accumulate(long x) {
+    Cell[] as; long b, v, r; int m; Cell a;
+    //1.先求(r = function.applyAsLong(b = base, x)) != b && !casBase(b, r) 这部分，
+    //  1.1 表示base与给定值x使用函数计算后不等于原来的base值，值改变了，那么使用计算后的值r通过CAS操作更新base值，如果	  //      更新失败继续后面的操作
+    //  1.2 如果使用函数计算后的值没有改变，该部分表达式为false，无需在执行casBase，接着判断(as = cells) != null
+    //      如果(as = cells) != null 为false，结束，如果是true，表示cells之前已经初始化，发生过竞争，需要进一步操作
+    if ((as = cells) != null ||
+        (r = function.applyAsLong(b = base, x)) != b && !casBase(b, r)) {
+        boolean uncontended = true;
+        //as == null || (m = as.length - 1) < 0 此时说明还未初始化，需要初始化
+        //(a = as[getProbe() & m]) == null 此时说明当前线程映射的槽为空，需要创建新的Cell并关联
+        //!(uncontended =(r = function.applyAsLong(v = a.value, x)) == v || a.cas(v, r)) 此时说明该位置的槽		  //    不为空，但value更新失败，说明有竞争，需要换槽
+        if (as == null || (m = as.length - 1) < 0 ||
+            (a = as[getProbe() & m]) == null ||
+            !(uncontended =
+              (r = function.applyAsLong(v = a.value, x)) == v ||
+              a.cas(v, r)))
+            longAccumulate(x, function, uncontended);
+    }
+}
+```
+
+### get
+
+获取函数计算后的值，将所有的Cell通过函数计算后返回
+
+```java
+public long get() {
+    Cell[] as = cells; Cell a;
+    long result = base;
+    if (as != null) {
+        for (int i = 0; i < as.length; ++i) {
+            if ((a = as[i]) != null)
+                result = function.applyAsLong(result, a.value);
+        }
+    }
+    return result;
+}
+```
+
+### reset
+
+将Cell的value值都重置为初始值
+
+```java
+public void reset() {
+    Cell[] as = cells; Cell a;
+    base = identity;
+    if (as != null) {
+        for (int i = 0; i < as.length; ++i) {
+            if ((a = as[i]) != null)
+                a.value = identity;
+        }
+    }
+}
+```
+
+### getThenReset
+
+将所有Cell的value值通过函数计算后，返回结果，并重置Cell的value值为初始值
+
+```java
+public long getThenReset() {
+    Cell[] as = cells; Cell a;
+    long result = base;
+    base = identity;
+    if (as != null) {
+        for (int i = 0; i < as.length; ++i) {
+            if ((a = as[i]) != null) {
+                long v = a.value;
+                a.value = identity;
+                result = function.applyAsLong(result, v);
+            }
+        }
+    }
+    return result;
+}
+```
+
+该类的其他方法类同LongAdder

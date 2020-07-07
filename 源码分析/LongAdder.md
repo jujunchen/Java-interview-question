@@ -524,7 +524,8 @@ public interface LongBinaryOperator {
 public void accumulate(long x) {
     Cell[] as; long b, v, r; int m; Cell a;
     //1.先求(r = function.applyAsLong(b = base, x)) != b && !casBase(b, r) 这部分，
-    //  1.1 表示base与给定值x使用函数计算后不等于原来的base值，值改变了，那么使用计算后的值r通过CAS操作更新base值，如果	  //      更新失败继续后面的操作
+    //  1.1 表示base与给定值x使用函数计算后不等于原来的base值，值改变了，那么使用计算后的值r通过CAS操作更新base值，如果
+    //      更新失败继续后面的操作
     //  1.2 如果使用函数计算后的值没有改变，该部分表达式为false，无需在执行casBase，接着判断(as = cells) != null
     //      如果(as = cells) != null 为false，结束，如果是true，表示cells之前已经初始化，发生过竞争，需要进一步操作
     if ((as = cells) != null ||
@@ -532,7 +533,8 @@ public void accumulate(long x) {
         boolean uncontended = true;
         //as == null || (m = as.length - 1) < 0 此时说明还未初始化，需要初始化
         //(a = as[getProbe() & m]) == null 此时说明当前线程映射的槽为空，需要创建新的Cell并关联
-        //!(uncontended =(r = function.applyAsLong(v = a.value, x)) == v || a.cas(v, r)) 此时说明该位置的槽		  //    不为空，但value更新失败，说明有竞争，需要换槽
+        //!(uncontended =(r = function.applyAsLong(v = a.value, x)) == v || a.cas(v, r)) 此时说明该位置的槽
+        //    不为空，但value更新失败，说明有竞争，需要换槽
         if (as == null || (m = as.length - 1) < 0 ||
             (a = as[getProbe() & m]) == null ||
             !(uncontended =

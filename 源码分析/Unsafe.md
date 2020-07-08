@@ -740,3 +740,5 @@ compareAndSwap (volatile jint *addr, jint old, jint new_val)
 }
 ```
 
+> 原文：https://blog.csdn.net/zyzzxycj/article/details/89877863
+

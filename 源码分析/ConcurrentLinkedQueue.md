@@ -108,6 +108,7 @@ static final class CLQSpliterator<E> implements Spliterator<E> {
                 if ((a[i] = p.item) != null)
                     //计数
                     ++i;
+                //当next也指向本身p的时候为true,也就是自引用，重新找头节点
                 if (p == (p = p.next))
                     p = q.first();
             } while (p != null && i < n);  //直到取完需要的元素数量
@@ -144,6 +145,7 @@ static final class CLQSpliterator<E> implements Spliterator<E> {
         }
     }
 
+    //获取一个有效的节点，执行指定函数
     public boolean tryAdvance(Consumer<? super E> action) {
         Node<E> p;
         if (action == null) throw new NullPointerException();
@@ -151,11 +153,14 @@ static final class CLQSpliterator<E> implements Spliterator<E> {
         if (!exhausted &&
             ((p = current) != null || (p = q.first()) != null)) {
             E e;
+            //通过循环的方式直到节点item值不为null
+            //item值为null时通过p.next继续寻找
             do {
                 e = p.item;
+                //同样如果p是自引用就重新寻找头节点
                 if (p == (p = p.next))
                     p = q.first();
-            } while (e == null && p != null);
+            } while (e == null && p != null); 
             if ((current = p) == null)
                 exhausted = true;
             if (e != null) {
@@ -166,11 +171,104 @@ static final class CLQSpliterator<E> implements Spliterator<E> {
         return false;
     }
 
+    //返回估计的元素数量，因为ConcurrentLinkedQueue是无限队列，返回MAX_VALUE
     public long estimateSize() { return Long.MAX_VALUE; }
 
+    //返回特征值
     public int characteristics() {
         return Spliterator.ORDERED | Spliterator.NONNULL |
             Spliterator.CONCURRENT;
+    }
+}
+```
+
+### Itr
+
+迭代器，从头节点到尾节点进行迭代，迭代器是弱一致性的，只是某一时刻的快照，因为同时有可能其他线程还在对队列进行修改
+
+```java
+private class Itr implements Iterator<E> {
+    /**
+     * 返回下个项目的节点
+     */
+    private Node<E> nextNode;
+
+    /**
+     * 保存下一个节点的item字段
+     */
+    private E nextItem;
+
+    /**
+     * 最后一个项目节点，支持删除
+     */
+    private Node<E> lastRet;
+
+    Itr() {
+        advance();
+    }
+
+    /**
+     * 移动到下一个有效节点，通过next()返回item或者null
+     */
+    private E advance() {
+        lastRet = nextNode;
+        E x = nextItem;
+
+        Node<E> pred, p;
+        //nextNode为null是说明是第一次运行
+        if (nextNode == null) {
+            //获取头节点
+            p = first();
+            pred = null;
+        } else {
+            //将上次获取的节点保存为此次的上一个节点
+            pred = nextNode;
+            //获取下一个节点
+            p = succ(nextNode);
+        }
+
+        for (;;) {
+            //p == null 的情况，可能是哨兵节点时，p=first()返回null
+            //也可能是 p=succ(nextNode)到最后一个节点时，返回null
+            if (p == null) {
+                nextNode = null;
+                nextItem = null;
+                return x;
+            }
+            E item = p.item;
+            if (item != null) {
+                nextNode = p;
+                nextItem = item;
+                return x;
+            } else {
+                // 如果item=null时，即节点已被其他线程删除，那么继续获取下一个节点
+                Node<E> next = succ(p);
+                if (pred != null && next != null)
+                    //跳过null节点，将上一个节点的next指向新的节点
+                    pred.casNext(p, next);
+                	//将p赋值新节点，继续循环
+                	p = next;
+            }
+        }
+    }
+
+    //通过下个项目节点不为null来判断是否还有下一个
+    public boolean hasNext() {
+        return nextNode != null;
+    }
+
+    //下一个项目
+    public E next() {
+        if (nextNode == null) throw new NoSuchElementException();
+        return advance();
+    }
+
+    public void remove() {
+        Node<E> l = lastRet;
+        if (l == null) throw new IllegalStateException();
+        //将最后一个项目节点设置为null，在下一次执行advance时，该节点将被重新连接
+        l.item = null;
+        lastRet = null;
     }
 }
 ```
@@ -181,32 +279,28 @@ static final class CLQSpliterator<E> implements Spliterator<E> {
 
 ```java
 /**
- * A node from which the first live (non-deleted) node (if any)
- * can be reached in O(1) time.
- * Invariants:
- * - all live nodes are reachable from head via succ()
+ * 头节点(未删除的)，到达时间复杂度O(1)
+ * 不变性:
+ * - 所有有效节点能够从头节点通过succ()方法到达
  * - head != null
- * - (tmp = head).next != tmp || tmp != head
- * Non-invariants:
- * - head.item may or may not be null.
- * - it is permitted for tail to lag behind head, that is, for tail
- *   to not be reachable from head!
- *	头节点
+ * - (tmp = head).next != tmp || tmp != head，就是头节点不会自引用
+ * 可变性:
+ * - head.item 可能是null也可能不是null
+ * - 允许tail滞后于head,也就是不能从头节点通过succ()到达
+ *	
  */
 private transient volatile Node<E> head;
 
 /**
- * A node from which the last node on list (that is, the unique
- * node with node.next == null) can be reached in O(1) time.
- * Invariants:
- * - the last node is always reachable from tail via succ()
+ * 尾节点，唯一一个node.next==null的节点，到达时间复杂度O(1)
+ * 不变性:
+ * - tail 节点通过succ()方法一定到达队列中的最后一个节点
  * - tail != null
- * Non-invariants:
- * - tail.item may or may not be null.
- * - it is permitted for tail to lag behind head, that is, for tail
- *   to not be reachable from head!
- * - tail.next may or may not be self-pointing to tail.
- *	尾节点
+ * 可变性:
+ * - tail.item 可能是null也可能不是null.
+ * - 允许tail滞后于head,也就是不能从头节点通过succ()到达
+ * - tail.next 可以指向自己，也可以不指向自己
+ *	
  */
 private transient volatile Node<E> tail;
 ```
@@ -284,5 +378,5 @@ public ConcurrentLinkedQueue(Collection<? extends E> c) {
 
 **根据给定的集合顺序创建队列对象，给定集合不是空集合**
 
-![指定集合构造](https://tva1.sinaimg.cn/large/007S8ZIlly1ggl6gmjcj5j30m90ptad9.jpg)
+![未命名绘图](https://tva1.sinaimg.cn/large/007S8ZIlly1ggmr3uhg8vj30yi0kb778.jpg)
 

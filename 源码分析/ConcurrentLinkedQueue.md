@@ -83,7 +83,7 @@ static final class CLQSpliterator<E> implements Spliterator<E> {
         this.queue = queue;
     }
 
-    //分割队列
+    //分割队列,返回的是ArraySpliterator
     public Spliterator<E> trySplit() {
         Node<E> p;
         final ConcurrentLinkedQueue<E> q = this.queue;
@@ -379,4 +379,51 @@ public ConcurrentLinkedQueue(Collection<? extends E> c) {
 **根据给定的集合顺序创建队列对象，给定集合不是空集合**
 
 ![未命名绘图](https://tva1.sinaimg.cn/large/007S8ZIlly1ggmr3uhg8vj30yi0kb778.jpg)
+
+## add
+
+在尾部插入元素，实际调用offer()
+
+## Offer-todo
+
+在尾部插入元素 
+
+```java
+public boolean offer(E e) {
+    checkNotNull(e);
+    final Node<E> newNode = new Node<E>(e);
+
+    for (Node<E> t = tail, p = t;;) {
+        Node<E> q = p.next;
+        //q->p.next,也就是说p已经是最后一个节点，p.next指向null
+        if (q == null) {
+            //cas设置
+            if (p.casNext(null, newNode)) {
+                // Successful CAS is the linearization point
+                // for e to become an element of this queue,
+                // and for newNode to become "live".
+                if (p != t) // hop two nodes at a time
+                    casTail(t, newNode);  // Failure is OK.
+                return true;
+            }
+            // Lost CAS race to another thread; re-read next
+        }
+        else if (p == q)
+            // We have fallen off list.  If tail is unchanged, it
+            // will also be off-list, in which case we need to
+            // jump to head, from which all live nodes are always
+            // reachable.  Else the new tail is a better bet.
+            p = (t != (t = tail)) ? t : head;
+        else
+            // Check for tail updates after two hops.
+            p = (p != t && t != (t = tail)) ? t : q;
+    }
+}
+```
+
+## remove
+
+![image-20200712235240041](https://tva1.sinaimg.cn/large/007S8ZIlly1ggomksmw2rj30pc0iw75l.jpg)
+
+> 这种情况是jdk的一个bug，会导致内存泄露，GC无法回收删除的节点，可见文章：https://mp.weixin.qq.com/s/ppZlpL5Ip7DHG1GG09uT6g
 

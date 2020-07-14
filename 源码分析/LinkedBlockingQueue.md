@@ -1,4 +1,12 @@
-# 默认线程池阻塞队列为什么用LinkedBlockingQueue
+# LinkedBlockingQueue 源码分析
+
+> 源码基于open-jdk 11
+
+有界阻塞队列，使用单向链表实现，通过ReentrantLock实现线程安全，阻塞通过Condition实现，出队和入队各一把锁，不存在互相竞争 
+
+![image-20200714154317899](https://tva1.sinaimg.cn/large/007S8ZIlly1ggqjo9fousj30yg0rkdhb.jpg)
+
+## 默认线程池阻塞队列为什么用LinkedBlockingQueue
 
 >  不管是Executors提供的几种线程池，还是Spring提供的线程池，你会发现阻塞队列用的都是LinkedBlockingQueue，而不是用的ArrayBlockingQueue。
 >

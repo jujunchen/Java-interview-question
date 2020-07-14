@@ -6,6 +6,222 @@
 
 ![image-20200714154317899](https://tva1.sinaimg.cn/large/007S8ZIlly1ggqjo9fousj30yg0rkdhb.jpg)
 
+## 内部类
+
+### Node
+
+节点对象
+
+```java
+static class Node<E> {
+    //值
+    E item;
+
+    /**
+     * 表示有效的后续节点
+     * null 表示最后一个节点
+     */
+    Node<E> next;
+
+    Node(E x) { item = x; }
+}
+```
+
+### Itr
+
+迭代器
+
+```java
+private class Itr implements Iterator<E> {
+    private Node<E> next;           //保存下一个节点
+    private E nextItem;             // 保存下一个节点的item值
+    private Node<E> lastRet;		//最近返回的项目节点
+    private Node<E> ancestor;       //remove()中用于断开连接
+
+    Itr() {
+        //获取写锁和取锁，takeLock 和 putLock
+        fullyLock();
+        try {
+            //从头节点开始，如果头节点的下一个节点存在
+            //为什么不直接用head呢？因为head最开始是指向一个哨兵节点,item=next=null
+            if ((next = head.next) != null)
+                //就将下一个节点的item值保存
+                nextItem = next.item;
+        } finally {
+            //释放写锁和取锁
+            fullyUnlock();
+        }
+    }
+
+    //通过next判断是否有下一个节点
+    public boolean hasNext() {
+        return next != null;
+    }
+
+    //获取下一个节点
+    public E next() {
+        Node<E> p;
+        if ((p = next) == null)
+            throw new NoSuchElementException();
+        //p = next != null，将节点保存在lastRet中
+        lastRet = p;
+        E x = nextItem;
+        //获取写锁和取锁
+        fullyLock();
+        try {
+            E e = null;
+            //获取有效的节点，直到节点的item值不为null
+            for (p = p.next; p != null && (e = p.item) == null; )
+                //获取下一个节点
+                p = succ(p);
+            next = p;
+            nextItem = e;
+        } finally {
+            //释放锁
+            fullyUnlock();
+        }
+        return x;
+    }
+
+    //循环对队列中的元素应用指定操作
+    public void forEachRemaining(Consumer<? super E> action) {
+        Objects.requireNonNull(action);
+        Node<E> p;
+        if ((p = next) == null) return;
+        lastRet = p;
+        next = null;
+        final int batchSize = 64;
+        Object[] es = null;
+        int n, len = 1;
+        do {
+            //获取写锁和读锁
+            fullyLock();
+            try {
+                //这是时候进行初始化，获取数组长度，创建数组
+                if (es == null) {
+                    p = p.next;
+                    for (Node<E> q = p; q != null; q = succ(q))
+                        if (q.item != null && ++len == batchSize)
+                            break;
+                    es = new Object[len];
+                    es[0] = nextItem;
+                    nextItem = null;
+                    n = 1;
+                } else
+                    n = 0;
+                //开始循环赋值
+                for (; p != null && n < len; p = succ(p))
+                    if ((es[n] = p.item) != null) {
+                        lastRet = p;
+                        n++;
+                    }
+            } finally {
+                //释放锁
+                fullyUnlock();
+            }
+            //循环执行指定操作
+            for (int i = 0; i < n; i++) {
+                @SuppressWarnings("unchecked") E e = (E) es[i];
+                action.accept(e);
+            }
+        } while (n > 0 && p != null);
+    }
+
+    public void remove() {
+        Node<E> p = lastRet;
+        if (p == null)
+            throw new IllegalStateException();
+        lastRet = null;
+        fullyLock();
+        try {
+            if (p.item != null) {
+                //第一次的时候从头部开始
+                if (ancestor == null)
+                    ancestor = head;
+                //查找当前节点p的上一个节点,findPred通过循环比较的方式
+                ancestor = findPred(p, ancestor);
+                //断开连接
+                unlink(p, ancestor);
+            }
+        } finally {
+            //释放锁
+            fullyUnlock();
+        }
+    }
+}
+```
+
+## 属性
+
+```java
+/**队列大小，最大为Integer.MAX_VALUE */
+private final int capacity;
+
+/**队列当前节点数量*/
+private final AtomicInteger count = new AtomicInteger();
+
+/**
+ * 头部节点
+ * Invariant: head.item == null
+ */
+transient Node<E> head;
+
+/**
+ * 尾部节点
+ * Invariant: last.next == null
+ */
+private transient Node<E> last;
+
+/**take,poll等要获取的锁*/
+private final ReentrantLock takeLock = new ReentrantLock();
+
+/**当队列为空时，出队操作的线程会阻塞放入该队列中等待*/
+private final Condition notEmpty = takeLock.newCondition();
+
+/**put,offer等要获取的锁*/
+private final ReentrantLock putLock = new ReentrantLock();
+
+/**当队列满时，入队操作的线程会放入该队列中等待*/
+private final Condition notFull = putLock.newCondition();
+```
+
+## findPred
+
+查找当前节点的上一个节点
+
+```java
+Node<E> findPred(Node<E> p, Node<E> ancestor) {
+    //如果ancestor为空，从头节点开始
+    if (ancestor.item == null)
+        ancestor = head;
+    //直到找到与当前节点p相同，返回上一个节点
+    for (Node<E> q; (q = ancestor.next) != p; )
+        ancestor = q;
+    return ancestor;
+}
+```
+
+## unlink
+
+断开连接
+
+```java
+//p为当前节点，pred为上一个节点
+void unlink(Node<E> p, Node<E> pred) {
+    p.item = null;
+    // 将当前节点p的下一个节点赋值给上一个节点pred的next上
+    pred.next = p.next;
+    //如果当前节点为最后一个节点
+    if (last == p)
+        //将上一个节点赋值给last，因为当前节点将被删除
+        last = pred;
+    //count获取数量，并减一
+    //判断之前是否是满的，因为删除了一个后，有空闲，唤醒原来在notFull阻塞的线程
+    if (count.getAndDecrement() == capacity)
+        notFull.signal();
+}
+```
+
 ## 默认线程池阻塞队列为什么用LinkedBlockingQueue
 
 >  不管是Executors提供的几种线程池，还是Spring提供的线程池，你会发现阻塞队列用的都是LinkedBlockingQueue，而不是用的ArrayBlockingQueue。

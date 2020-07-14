@@ -199,7 +199,7 @@ private class Itr implements Iterator<E> {
     private E nextItem;
 
     /**
-     * 最后一个项目节点，支持删除
+     * 最近一个返回的项目节点，支持删除
      */
     private Node<E> lastRet;
 
@@ -266,7 +266,7 @@ private class Itr implements Iterator<E> {
     public void remove() {
         Node<E> l = lastRet;
         if (l == null) throw new IllegalStateException();
-        //将最后一个项目节点设置为null，在下一次执行advance时，该节点将被重新连接
+        //将最近一个项目节点设置为null，在下一次执行advance时，该节点将被重新连接
         l.item = null;
         lastRet = null;
     }

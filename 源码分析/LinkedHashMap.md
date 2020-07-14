@@ -1,5 +1,7 @@
 # LinkedHashMap源码分析
 
+> 以下源码基于Java8
+
 众所周知 [HashMap]是一个无序的 `Map`，因为每次根据 `key` 的 `hashcode` 映射到 `Entry` 数组上，所以遍历出来的顺序并不是写入的顺序。
 
 因此 JDK 推出一个基于 `HashMap` 但具有顺序的 `LinkedHashMap` 来解决有排序需求的场景。

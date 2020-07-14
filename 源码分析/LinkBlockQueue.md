@@ -1,6 +1,8 @@
 # 默认线程池阻塞队列为什么用LinkedBlockingQueue
 
->  不管是Executors提供的几种线程池，还是Spring提供的线程池，你会发现阻塞队列用的都是LinkedBlockingQueue，而不是用的ArrayBlockingQueue
+>  不管是Executors提供的几种线程池，还是Spring提供的线程池，你会发现阻塞队列用的都是LinkedBlockingQueue，而不是用的ArrayBlockingQueue。
+>
+>  源码基于Java8
 
 #### LinkedBlockingQueue
 

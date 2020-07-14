@@ -1,6 +1,6 @@
 # ConcurrentLinkedQueue 源码分析
 
-
+> 源码基于Java8
 
 无界非阻塞队列，底层使用单向链表实现，对于出队和入队使用CAS来实现线程安全。
 
@@ -384,38 +384,43 @@ public ConcurrentLinkedQueue(Collection<? extends E> c) {
 
 在尾部插入元素，实际调用offer()
 
-## Offer-todo
+## offer
 
 在尾部插入元素 
 
 ```java
 public boolean offer(E e) {
+    //检查插入值不能为null
     checkNotNull(e);
+    //构造node对象
     final Node<E> newNode = new Node<E>(e);
 
     for (Node<E> t = tail, p = t;;) {
         Node<E> q = p.next;
         //q->p.next,也就是说p已经是最后一个节点，p.next指向null
         if (q == null) {
-            //cas设置
+            //cas设置，如果cas失败，说明有其他线程竞争，等待下次循环再次尝试cas设置
             if (p.casNext(null, newNode)) {
-                // Successful CAS is the linearization point
-                // for e to become an element of this queue,
-                // and for newNode to become "live".
-                if (p != t) // hop two nodes at a time
-                    casTail(t, newNode);  // Failure is OK.
+                //设置成功
+                //尾节点与当前节点相隔两个，设置尾节点tail指向最后一个节点，即newNode
+                if (p != t) 
+                    //允许失败，下次会继续处理
+                    casTail(t, newNode); 
                 return true;
             }
-            // Lost CAS race to another thread; re-read next
         }
-        else if (p == q)
-            // We have fallen off list.  If tail is unchanged, it
-            // will also be off-list, in which case we need to
-            // jump to head, from which all live nodes are always
-            // reachable.  Else the new tail is a better bet.
+        //❓这里我在debug时有个奇怪问题
+        //测试用例只有简单的add()方法，有时候能够进入该代码内，有时候执行的else部分代码
+        //这个问题，见https://my.oschina.net/u/4311881/blog/3264783/print
+        else if (p == q) 
+            //这种情况会发生在节点已经被删除的时候，即p.next -> p 本身
+            //如果tail没有发生变化，需要跳转到头节点head，从head节点能够到达任何存活节点
+            //否则说明tail已经重新指向，用新的tail
             p = (t != (t = tail)) ? t : head;
         else
-            // Check for tail updates after two hops.
+            //(p != t)  说明执行过 p = q 操作(向后遍历操作)
+            //(t != (t = tail))) 说明尾节点在其他的线程发生变化
+            //添加2次检查一次
             p = (p != t && t != (t = tail)) ? t : q;
     }
 }
@@ -423,7 +428,416 @@ public boolean offer(E e) {
 
 ## remove
 
+### add、remove发生的bug
+
+```java
+public static void main(String[] args) {
+    ConcurrentLinkedQueue<Object> queue = new ConcurrentLinkedQueue<Object>();
+    queue.add(new Object());
+    Object object = new Object();
+    int loops = 0;
+    Runtime rt = Runtime.getRuntime();
+    long last = System.currentTimeMillis();
+    while (true) {
+        if (loops % 10000 == 0) {
+            long now = System.currentTimeMillis();
+            long duration = now - last;
+            last = now;
+            System.out.printf("duration=%d q.size=%d memory max=%d free=%d total=%d%n",
+                              duration,queue.size(),rt.maxMemory(),rt.freeMemory(),rt.totalMemory());
+        }
+        queue.add(object);
+        queue.remove(object);
+        ++loops;
+    }
+}
+```
+
+多次add,remove操作后，会有很多已经删除的null节点，本应该GC回收，但因为互相连接无法回收，导致长时间运行后内存泄漏。
+
 ![image-20200712235240041](https://tva1.sinaimg.cn/large/007S8ZIlly1ggomksmw2rj30pc0iw75l.jpg)
 
-> 这种情况是jdk的一个bug，会导致内存泄露，GC无法回收删除的节点，可见文章：https://mp.weixin.qq.com/s/ppZlpL5Ip7DHG1GG09uT6g
+> 这种情况是jdk的一个bug，可见文章：https://mp.weixin.qq.com/s/ppZlpL5Ip7DHG1GG09uT6g
+
+看看remove代码
+
+```java
+public boolean remove(Object o) {
+    //删除元素为null直接返回false
+    if (o != null) {
+        //pred上一个节点，next下一个节点
+        Node<E> next, pred = null;
+        for (Node<E> p = first(); p != null; pred = p, p = next) {
+            boolean removed = false;
+            E item = p.item;
+            //元素item值不为null,item=null都是被删除的节点
+            if (item != null) {
+                //当前节点的item与希望删除值不相同，继续下一个节点
+                //通过equals判断值是否相同
+                if (!o.equals(item)) {
+                    //获取下一个节点
+                    next = succ(p);
+                    //下一次循环
+                    continue;
+                }
+                //相同将item置为null，cas设置成功返回true
+                removed = p.casItem(item, null);
+            }
+            //如果item=null，获取下一个节点，用于下次循环
+            //如果节点casItem成功，判断下了节点是否有节点
+            next = succ(p);
+            //当上一个节点，和下一个节点都存在时
+            //将上一个节点的next跳过当前节点，关联到下一个节点
+            //这就是产生上述bug的地方
+            if (pred != null && next != null) // unlink
+                pred.casNext(p, next);
+            if (removed)
+                return true;
+        }
+    }
+    return false;
+}
+```
+
+## poll
+
+弹出头节点，会删除头节点，返回节点item值
+
+```java
+public E poll() {
+    restartFromHead:
+    //这层循环能够起到在continue restartFromHead后，重新初始化第二个for
+    for (;;) {
+        for (Node<E> h = head, p = h, q;;) {
+            E item = p.item;
+            //头节点item不为null，那么设置头节点的item为null
+            if (item != null && p.casItem(item, null)) {
+                //cas设置成功后，由于h指向初始的head，p为当前节点，需要更新头节点head
+                if (p != h) 
+                    //(q = p.next) != null 为false时，即p为尾节点，那么head还是指向当前节点p
+                    //否则将head节点更新为p.next
+                    updateHead(h, ((q = p.next) != null) ? q : p);
+                //返回
+                return item;
+            }
+            //(q = p.next) == null 为true，p.item=null
+            //空队列，有可能当前节点要被删除(多线程下)，或者是一个哨兵节点
+            else if ((q = p.next) == null) {
+                //更新头节点
+                updateHead(h, p);
+                return null;
+            }
+            //自引用节点，说明当前节点已被删除，跳到开头重新开始
+            else if (p == q)
+                continue restartFromHead;
+            else
+                // q -> p进行下个节点判断
+                p = q;
+        }
+    }
+}
+```
+
+## peek
+
+获取头节点元素，不删除元素，与poll()类似
+
+```java
+public E peek() {
+    restartFromHead:
+    for (;;) {
+        for (Node<E> h = head, p = h, q;;) {
+            E item = p.item;
+            //(q = p.next) == null 为true 说明是空队列
+            if (item != null || (q = p.next) == null) {
+                updateHead(h, p);
+                return item;
+            }
+            else if (p == q)
+                continue restartFromHead;
+            else
+                p = q;
+        }
+    }
+}
+```
+
+## isEmpty
+
+判断队列是否为空，通过头节点是否为null判断
+
+```
+public boolean isEmpty() {
+    return first() == null;
+}
+```
+
+## size
+
+返回队列中有效元素(item != null)长度
+
+```java
+public int size() {
+    int count = 0;
+    //从头节点开始循环
+    for (Node<E> p = first(); p != null; p = succ(p))
+        if (p.item != null)
+            // 如果超过最大值，提前结束
+            if (++count == Integer.MAX_VALUE)
+                break;
+    return count;
+}
+```
+
+## contains
+
+判断队列中是否包含指定值的节点
+
+```java
+public boolean contains(Object o) {
+    //由于队列中不包含null的节点(哨兵节点不算)，直接返回false
+    if (o == null) return false;
+    for (Node<E> p = first(); p != null; p = succ(p)) {
+        E item = p.item;
+        //通过equals判断
+        if (item != null && o.equals(item))
+            return true;
+    }
+    return false;
+}
+```
+
+## addAll
+
+将给定集合添加到队列中，返回是否成功
+
+```java
+public boolean addAll(Collection<? extends E> c) {
+    if (c == this)
+        //不能自己添加自己
+        throw new IllegalArgumentException();
+
+    //循环设置队列
+    Node<E> beginningOfTheEnd = null, last = null;
+    for (E e : c) {
+        checkNotNull(e);
+        Node<E> newNode = new Node<E>(e);
+        //beginningOfTheEnd = null 表示第一次循环，将beginningOfTheEnd，last都指向第一个节点
+        if (beginningOfTheEnd == null)
+            beginningOfTheEnd = last = newNode;
+        else {
+            //beginningOfTheEnd != null 设置后续节点
+            last.lazySetNext(newNode);
+            last = newNode;
+        }
+    }
+    //为ture说明c是一个空集合
+    if (beginningOfTheEnd == null)
+        return false;
+
+    //更新head，和tail变量
+    for (Node<E> t = tail, p = t;;) {
+        //一直获取下一个节点
+        Node<E> q = p.next;
+        //直到最后一个
+        if (q == null) {
+            //beginningOfTheEnd已经在前面设置完成，形成了链表 这里通过cas将新链表链接到原来链表的最后一个节点
+            if (p.casNext(null, beginningOfTheEnd)) {
+                // 更新tail指向链表最后一个节点
+                if (!casTail(t, last)) {
+                    // 如果失败了，说明有竞争，再次尝试
+                    t = tail;
+                    if (last.next == null)
+                        casTail(t, last);
+                }
+                return true;
+            }
+        }
+        else if (p == q)
+            //在多线程的情况下会发生节点被删除的情况，需要重新赋值头部，并重新寻找最后的节点
+            p = (t != (t = tail)) ? t : head;
+        else
+            //检查tail节点
+            p = (p != t && t != (t = tail)) ? t : q;
+    }
+}
+```
+
+## toArray
+
+```java
+//将队列元素循环赋值给ArrayList，再输出数组
+//由于返回新数组，所以对数组的修改不会影响原队列,但如果元素是对象，对对象的修改，会影响到原队列中的元素
+public Object[] toArray() {
+    ArrayList<E> al = new ArrayList<E>();
+    for (Node<E> p = first(); p != null; p = succ(p)) {
+        E item = p.item;
+        if (item != null)
+            al.add(item);
+    }
+    return al.toArray();
+}
+```
+
+例子：
+
+```java
+@Test
+public void test1 {
+    concurrentLinkedQueue2.add(new Person());
+    concurrentLinkedQueue2.add(new Person());
+    concurrentLinkedQueue2.add(new Person());
+
+    //对数组中的对象进行修改
+    Object[] objects = concurrentLinkedQueue2.toArray();
+    Person person = (Person) objects[0];
+    Person person1 = concurrentLinkedQueue2.peek();
+    assert  person == person1;
+}
+```
+
+
+
+```java
+//将队列元素输出到指定的数组中
+public <T> T[] toArray(T[] a) {
+    //将元素输出到指定数组中
+    int k = 0;
+    Node<E> p;
+    for (p = first(); p != null && k < a.length; p = succ(p)) {
+        E item = p.item;
+        if (item != null)
+            a[k++] = (T)item;
+    }
+    //p == null 为true 表示队列后面没有节点了
+    //为false 表示后面还有节点，将采用ArrayList方法输出数组
+    //所以始终会将队列中的所有有效元素输出
+    if (p == null) {
+        //k < a.length为true 表明给定数组长度比较大
+        if (k < a.length)
+            //为什么要设值一下呢？
+            a[k] = null;
+        return a;
+    }
+
+    //使用ArrayList输出
+    ArrayList<E> al = new ArrayList<E>();
+    for (Node<E> q = first(); q != null; q = succ(q)) {
+        E item = q.item;
+        if (item != null)
+            al.add(item);
+    }
+    return al.toArray(a);
+}
+```
+
+## iterator、spliterator
+
+```java
+//创建迭代器
+public Iterator<E> iterator() {
+        return new Itr();
+}
+
+//创建可拆分迭代器
+public Spliterator<E> spliterator() {
+        return new CLQSpliterator<E>(this);
+}
+```
+
+## updateHead
+
+更新头节点head，主要作用就是将h节点变为自引用，并更新head头节点，变为自引用的节点将被GC回收
+
+```java
+//更新头节点head
+final void updateHead(Node<E> h, Node<E> p) {
+    if (h != p && casHead(h, p))
+        //将h节点变为自引用
+        h.lazySetNext(h);
+}
+```
+
+## succ
+
+```java
+//获取下一个节点
+final Node<E> succ(Node<E> p) {
+    Node<E> next = p.next;
+    //p == next 表示p是自引用节点，需要从head头开始,返回头节点
+    return (p == next) ? head : next;
+}
+```
+
+## first
+
+```java
+//获取队列的第一个元素
+Node<E> first() {
+    restartFromHead:
+    for (;;) {
+        for (Node<E> h = head, p = h, q;;) {
+            boolean hasItem = (p.item != null);
+            //hasItem 为true，就返回
+            //为false 执行 q=p.next 获取下个节点，当下个节点也不存在时,说明该节点p已经被删除
+          	//此时就相当于初始化时候的哨兵节点item = null, next = null
+            if (hasItem || (q = p.next) == null) {
+                //更新头
+                updateHead(h, p);
+                return hasItem ? p : null;
+            }
+            else if (p == q)
+                continue restartFromHead;
+            else
+                p = q;
+        }
+    }
+}
+```
+
+## writeObject、readObject
+
+```java
+//将队列写入输出流中
+private void writeObject(java.io.ObjectOutputStream s)
+    throws java.io.IOException {
+
+    // Write out any hidden stuff
+    s.defaultWriteObject();
+
+    // Write out all elements in the proper order.
+    for (Node<E> p = first(); p != null; p = succ(p)) {
+        Object item = p.item;
+        if (item != null)
+            s.writeObject(item);
+    }
+
+    // Use trailing null as sentinel
+    s.writeObject(null);
+}
+
+//从输入流中读取并转换为队列
+private void readObject(java.io.ObjectInputStream s)
+        throws java.io.IOException, ClassNotFoundException {
+        s.defaultReadObject();
+
+        // Read in elements until trailing null sentinel found
+        Node<E> h = null, t = null;
+        Object item;
+        while ((item = s.readObject()) != null) {
+            @SuppressWarnings("unchecked")
+            Node<E> newNode = new Node<E>((E) item);
+            if (h == null)
+                h = t = newNode;
+            else {
+                t.lazySetNext(newNode);
+                t = newNode;
+            }
+        }
+        if (h == null)
+            h = t = new Node<E>(null);
+        head = h;
+        tail = t;
+    }
+```
 

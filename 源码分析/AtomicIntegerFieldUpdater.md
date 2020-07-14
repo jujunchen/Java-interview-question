@@ -1,5 +1,7 @@
 #  AtomicIntegerFieldUpdater源码分析
 
+> 源码基于Java8
+
 这个类是一个基于反射的使用的工具类，可以对指定类的指定的被volatile修饰的int型字段进行原子更新。
 
 ![image-20200708232748537](https://tva1.sinaimg.cn/large/007S8ZIlly1ggjzdqqif2j30ys0gkwfy.jpg)

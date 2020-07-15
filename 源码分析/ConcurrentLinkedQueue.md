@@ -118,7 +118,7 @@ static final class CLQSpliterator<E> implements Spliterator<E> {
             //有不为null的元素
             if (i > 0) {
                 batch = i;
-                //分割数组从0-i不包括i，指定了迭代器的特性
+                //创建Spliterator，数组从0-i不包括i，指定了迭代器的特性
                 return Spliterators.spliterator
                     (a, 0, i, Spliterator.ORDERED | Spliterator.NONNULL |
                      Spliterator.CONCURRENT);

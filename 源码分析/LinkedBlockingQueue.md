@@ -910,7 +910,7 @@ public boolean retainAll(Collection<?> c) {
 
 ```java
 /**
- * 读锁和写锁，加锁
+ * 先获取写锁，在获取读锁
  */
 void fullyLock() {
     putLock.lock();
@@ -918,7 +918,7 @@ void fullyLock() {
 }
 
 /**
- * 释放读锁和写锁
+ * 以加锁反方向，释放锁，先释放读锁，再释放写锁
  */
 void fullyUnlock() {
     takeLock.unlock();

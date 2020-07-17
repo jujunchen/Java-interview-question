@@ -2,7 +2,7 @@
 
 > 源码基于open-jdk 11
 
-有界阻塞队列，使用单向链表实现，通过ReentrantLock实现线程安全，阻塞通过Condition实现，出队和入队各一把锁，不存在互相竞争 
+有界阻塞队列，使用单向链表实现，通过ReentrantLock实现线程安全，阻塞通过Condition实现，出队和入队各一把锁，不存在互相竞争 ,一种经典的生产和消费模式场景
 
 ![image-20200714154317899](https://tva1.sinaimg.cn/large/007S8ZIlly1ggqjo9fousj30yg0rkdhb.jpg)
 

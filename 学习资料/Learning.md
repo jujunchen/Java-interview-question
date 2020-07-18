@@ -38,6 +38,10 @@
 
 
 
+### 其他参考资料
+
+Java知识库：https://www.yuque.com/lexiangqizhong/java
+
 ## 其他
 
 ![image-20200627142356190](https://tva1.sinaimg.cn/large/007S8ZIlly1gg6tugktvgj30as0cc0tf.jpg)

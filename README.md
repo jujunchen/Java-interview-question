@@ -1,6 +1,6 @@
 # 阅读介绍
 
-> 这里搜罗了网上的一些面试题，还有一些相关知识点，有一些是我站在面试官的角度自问的
+> 这里搜罗了网上的一些面试题，还有一些相关知识点
 >
 > 里面的一些问题如感觉有不对的地方，欢迎指正。  
 >
@@ -26,6 +26,8 @@ Redis :https://redis.io/documentation
 
 Dubbo：http://dubbo.apache.org/zh-cn/docs/user/quick-start.html
 
+ShardingJDBC:https://shardingsphere.apache.org/document/current/cn/features/
+
 ### 在线阅读
 
 使用语雀提供了较好的阅读体验
@@ -38,13 +40,13 @@ https://www.yuque.com/itsaysay/mzsmvg
 
 https://github.com/jujunchen/ebook
 
-### 视频资料
+### 学习资料
 
-[视频资料地址](https://github.com/jujunchen/Java-interview-question/tree/master/学习资料)
+[学习资料地址](https://github.com/jujunchen/Java-interview-question/tree/master/学习资料)
 
 #### 交流平台
 
-![image-20191114204200585](https://tva1.sinaimg.cn/large/006tNbRwly1ga6zjor75uj30b9072gnk.jpg)
+![阿提说说](https://tva1.sinaimg.cn/large/007S8ZIlly1ggv0xy8u89j305805675g.jpg)
 
 
 

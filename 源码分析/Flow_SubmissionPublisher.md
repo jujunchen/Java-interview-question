@@ -1,2 +1,644 @@
 # Flow、SubmissionPubliser源码分析
 
+> 基于open jdk 11
+
+Flow 、SubmissionPubliser类是 java9中新增的类，都被放在JUC包中
+
+## Flow
+
+定义了一种生产者和消费者(订阅者)模型的接口，可以用于流式控制中
+
+### Publisher
+
+```java
+//流式接口
+//定义生产者
+@FunctionalInterface
+public static interface Publisher<T> {
+    /**
+     * 增加订阅者
+     *
+     * @param subscriber 订阅者
+     * @throws NullPointerException if subscriber is null
+     */
+    public void subscribe(Subscriber<? super T> subscriber);
+}
+```
+
+### Subscriber
+
+```java
+//订阅者
+public static interface Subscriber<T> {
+    /**
+     * 在Publisher接收一个新的订阅者时，会调用该方法
+     *
+     * @param subscription 订阅包，提供了获取下一个元素和取消获取操作的方法
+     */
+    public void onSubscribe(Subscription subscription);
+
+    /**
+     * 获取一个新元素，每次有新元素的时候会被调用
+     *
+     * @param item the item
+     */
+    public void onNext(T item);
+
+    /**
+     * 发送异常时会被调用
+     *
+     * @param throwable the exception
+     */
+    public void onError(Throwable throwable);
+
+    /**
+     * 当数据接收完成后调用
+     */
+    public void onComplete();
+}
+```
+
+### Subscription
+
+```java
+//订阅包
+public static interface Subscription {
+    /**
+     * 发起请求，获取元素
+     *
+     * @param n 获取的增量，Long.MAX_VALUE表示无限的
+     */
+    public void request(long n);
+
+    /**
+     * 取消消息接收
+     */
+    public void cancel();
+}
+```
+
+### Processor
+
+```java
+//既可以充当生产者，也可以充当订阅者
+public static interface Processor<T,R> extends Subscriber<T>, Publisher<R> {
+}
+
+static final int DEFAULT_BUFFER_SIZE = 256;
+
+/**
+ * 定义的默认缓存区，256
+ *
+ * @return the buffer size value
+ */
+public static int defaultBufferSize() {
+    return DEFAULT_BUFFER_SIZE;
+}
+```
+
+## SubmissionPublisher
+
+FLow 类的一种实现，可以在并发环境下使用
+
+### 内部类
+
+#### ConsumerSubscriber
+
+```java
+/** 订阅者 */
+static final class ConsumerSubscriber<T> implements Subscriber<T> {
+    final CompletableFuture<Void> status;
+    final Consumer<? super T> consumer;
+    Subscription subscription;
+    ConsumerSubscriber(CompletableFuture<Void> status,
+                       Consumer<? super T> consumer) {
+        this.status = status; this.consumer = consumer;
+    }
+    public final void onSubscribe(Subscription subscription) {
+        this.subscription = subscription;
+        status.whenComplete((v, e) -> subscription.cancel());
+        if (!status.isDone())
+            subscription.request(Long.MAX_VALUE);
+    }
+    public final void onError(Throwable ex) {
+        status.completeExceptionally(ex);
+    }
+    public final void onComplete() {
+        status.complete(null);
+    }
+    public final void onNext(T item) {
+        try {
+            consumer.accept(item);
+        } catch (Throwable ex) {
+            subscription.cancel();
+            status.completeExceptionally(ex);
+        }
+    }
+}
+```
+
+#### ConsumerTask
+
+```java
+//订阅者的消费任务
+static final class ConsumerTask<T> extends ForkJoinTask<Void>
+    implements Runnable, CompletableFuture.AsynchronousCompletionTask {
+    final BufferedSubscription<T> consumer;
+    ConsumerTask(BufferedSubscription<T> consumer) {
+        this.consumer = consumer;
+    }
+    public final Void getRawResult() { return null; }
+    public final void setRawResult(Void v) {}
+    public final boolean exec() { consumer.consume(); return false; }
+    public final void run() { consumer.consume(); }
+}
+```
+
+### BufferedSubscription
+
+```java
+@jdk.internal.vm.annotation.Contended
+static final class BufferedSubscription<T>
+    implements Subscription, ForkJoinPool.ManagedBlocker {
+    long timeout;                      // Long.MAX_VALUE if untimed wait
+    int head;                          // next position to take
+    int tail;                          // next position to put
+    final int maxCapacity;             // max buffer size
+    volatile int ctl;                  // atomic run state flags
+    Object[] array;                    // buffer
+    final Subscriber<? super T> subscriber;
+    final BiConsumer<? super Subscriber<? super T>, ? super Throwable> onNextHandler;
+    Executor executor;                 // null on error
+    Thread waiter;                     // blocked producer thread
+    Throwable pendingError;            // holds until onError issued
+    BufferedSubscription<T> next;      // used only by publisher
+    BufferedSubscription<T> nextRetry; // used only by publisher
+
+    @jdk.internal.vm.annotation.Contended("c") // segregate
+    volatile long demand;              // # unfilled requests
+    @jdk.internal.vm.annotation.Contended("c")
+    volatile int waiting;              // nonzero if producer blocked
+
+    // ctl bit values
+    static final int CLOSED   = 0x01;  // if set, other bits ignored
+    static final int ACTIVE   = 0x02;  // keep-alive for consumer task
+    static final int REQS     = 0x04;  // (possibly) nonzero demand
+    static final int ERROR    = 0x08;  // issues onError when noticed
+    static final int COMPLETE = 0x10;  // issues onComplete when done
+    static final int RUN      = 0x20;  // task is or will be running
+    static final int OPEN     = 0x40;  // true after subscribe
+
+    static final long INTERRUPTED = -1L; // timeout vs interrupt sentinel
+
+    BufferedSubscription(Subscriber<? super T> subscriber,
+                         Executor executor,
+                         BiConsumer<? super Subscriber<? super T>,
+                         ? super Throwable> onNextHandler,
+                         Object[] array,
+                         int maxBufferCapacity) {
+        this.subscriber = subscriber;
+        this.executor = executor;
+        this.onNextHandler = onNextHandler;
+        this.array = array;
+        this.maxCapacity = maxBufferCapacity;
+    }
+
+    // Wrappers for some VarHandle methods
+
+    final boolean weakCasCtl(int cmp, int val) {
+        return CTL.weakCompareAndSet(this, cmp, val);
+    }
+
+    final int getAndBitwiseOrCtl(int bits) {
+        return (int)CTL.getAndBitwiseOr(this, bits);
+    }
+
+    final long subtractDemand(int k) {
+        long n = (long)(-k);
+        return n + (long)DEMAND.getAndAdd(this, n);
+    }
+
+    final boolean casDemand(long cmp, long val) {
+        return DEMAND.compareAndSet(this, cmp, val);
+    }
+
+    // Utilities used by SubmissionPublisher
+
+    /**
+     * Returns true if closed (consumer task may still be running).
+     */
+    final boolean isClosed() {
+        return (ctl & CLOSED) != 0;
+    }
+
+    /**
+     * Returns estimated number of buffered items, or negative if
+     * closed.
+     */
+    final int estimateLag() {
+        int c = ctl, n = tail - head;
+        return ((c & CLOSED) != 0) ? -1 : (n < 0) ? 0 : n;
+    }
+
+    // Methods for submitting items
+
+    /**
+     * Tries to add item and start consumer task if necessary.
+     * @return negative if closed, 0 if saturated, else estimated lag
+     */
+    final int offer(T item, boolean unowned) {
+        Object[] a;
+        int stat = 0, cap = ((a = array) == null) ? 0 : a.length;
+        int t = tail, i = t & (cap - 1), n = t + 1 - head;
+        if (cap > 0) {
+            boolean added;
+            if (n >= cap && cap < maxCapacity) // resize
+                added = growAndOffer(item, a, t);
+            else if (n >= cap || unowned)      // need volatile CAS
+                added = QA.compareAndSet(a, i, null, item);
+            else {                             // can use release mode
+                QA.setRelease(a, i, item);
+                added = true;
+            }
+            if (added) {
+                tail = t + 1;
+                stat = n;
+            }
+        }
+        return startOnOffer(stat);
+    }
+
+    /**
+     * Tries to expand buffer and add item, returning true on
+     * success. Currently fails only if out of memory.
+     */
+    final boolean growAndOffer(T item, Object[] a, int t) {
+        int cap = 0, newCap = 0;
+        Object[] newArray = null;
+        if (a != null && (cap = a.length) > 0 && (newCap = cap << 1) > 0) {
+            try {
+                newArray = new Object[newCap];
+            } catch (OutOfMemoryError ex) {
+            }
+        }
+        if (newArray == null)
+            return false;
+        else {                                // take and move items
+            int newMask = newCap - 1;
+            newArray[t-- & newMask] = item;
+            for (int mask = cap - 1, k = mask; k >= 0; --k) {
+                Object x = QA.getAndSet(a, t & mask, null);
+                if (x == null)
+                    break;                    // already consumed
+                else
+                    newArray[t-- & newMask] = x;
+            }
+            array = newArray;
+            VarHandle.releaseFence();         // release array and slots
+            return true;
+        }
+    }
+
+    /**
+     * Version of offer for retries (no resize or bias)
+     */
+    final int retryOffer(T item) {
+        Object[] a;
+        int stat = 0, t = tail, h = head, cap;
+        if ((a = array) != null && (cap = a.length) > 0 &&
+            QA.compareAndSet(a, (cap - 1) & t, null, item))
+            stat = (tail = t + 1) - h;
+        return startOnOffer(stat);
+    }
+
+    /**
+     * Tries to start consumer task after offer.
+     * @return negative if now closed, else argument
+     */
+    final int startOnOffer(int stat) {
+        int c; // start or keep alive if requests exist and not active
+        if (((c = ctl) & (REQS | ACTIVE)) == REQS &&
+            ((c = getAndBitwiseOrCtl(RUN | ACTIVE)) & (RUN | CLOSED)) == 0)
+            tryStart();
+        else if ((c & CLOSED) != 0)
+            stat = -1;
+        return stat;
+    }
+
+    /**
+     * Tries to start consumer task. Sets error state on failure.
+     */
+    final void tryStart() {
+        try {
+            Executor e;
+            ConsumerTask<T> task = new ConsumerTask<T>(this);
+            if ((e = executor) != null)   // skip if disabled on error
+                e.execute(task);
+        } catch (RuntimeException | Error ex) {
+            getAndBitwiseOrCtl(ERROR | CLOSED);
+            throw ex;
+        }
+    }
+
+    // Signals to consumer tasks
+
+    /**
+     * Sets the given control bits, starting task if not running or closed.
+     * @param bits state bits, assumed to include RUN but not CLOSED
+     */
+    final void startOnSignal(int bits) {
+        if ((ctl & bits) != bits &&
+            (getAndBitwiseOrCtl(bits) & (RUN | CLOSED)) == 0)
+            tryStart();
+    }
+
+    final void onSubscribe() {
+        startOnSignal(RUN | ACTIVE);
+    }
+
+    final void onComplete() {
+        startOnSignal(RUN | ACTIVE | COMPLETE);
+    }
+
+    final void onError(Throwable ex) {
+        int c; Object[] a;      // to null out buffer on async error
+        if (ex != null)
+            pendingError = ex;  // races are OK
+        if (((c = getAndBitwiseOrCtl(ERROR | RUN | ACTIVE)) & CLOSED) == 0) {
+            if ((c & RUN) == 0)
+                tryStart();
+            else if ((a = array) != null)
+                Arrays.fill(a, null);
+        }
+    }
+
+    public final void cancel() {
+        onError(null);
+    }
+
+    public final void request(long n) {
+        if (n > 0L) {
+            for (;;) {
+                long p = demand, d = p + n;  // saturate
+                if (casDemand(p, d < p ? Long.MAX_VALUE : d))
+                    break;
+            }
+            startOnSignal(RUN | ACTIVE | REQS);
+        }
+        else
+            onError(new IllegalArgumentException(
+                        "non-positive subscription request"));
+    }
+
+    // Consumer task actions
+
+    /**
+     * Consumer loop, called from ConsumerTask, or indirectly when
+     * helping during submit.
+     */
+    final void consume() {
+        Subscriber<? super T> s;
+        if ((s = subscriber) != null) {          // hoist checks
+            subscribeOnOpen(s);
+            long d = demand;
+            for (int h = head, t = tail;;) {
+                int c, taken; boolean empty;
+                if (((c = ctl) & ERROR) != 0) {
+                    closeOnError(s, null);
+                    break;
+                }
+                else if ((taken = takeItems(s, d, h)) > 0) {
+                    head = h += taken;
+                    d = subtractDemand(taken);
+                }
+                else if ((d = demand) == 0L && (c & REQS) != 0)
+                    weakCasCtl(c, c & ~REQS);    // exhausted demand
+                else if (d != 0L && (c & REQS) == 0)
+                    weakCasCtl(c, c | REQS);     // new demand
+                else if (t == (t = tail)) {      // stability check
+                    if ((empty = (t == h)) && (c & COMPLETE) != 0) {
+                        closeOnComplete(s);      // end of stream
+                        break;
+                    }
+                    else if (empty || d == 0L) {
+                        int bit = ((c & ACTIVE) != 0) ? ACTIVE : RUN;
+                        if (weakCasCtl(c, c & ~bit) && bit == RUN)
+                            break;               // un-keep-alive or exit
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Consumes some items until unavailable or bound or error.
+     *
+     * @param s subscriber
+     * @param d current demand
+     * @param h current head
+     * @return number taken
+     */
+    final int takeItems(Subscriber<? super T> s, long d, int h) {
+        Object[] a;
+        int k = 0, cap;
+        if ((a = array) != null && (cap = a.length) > 0) {
+            int m = cap - 1, b = (m >>> 3) + 1; // min(1, cap/8)
+            int n = (d < (long)b) ? (int)d : b;
+            for (; k < n; ++h, ++k) {
+                Object x = QA.getAndSet(a, h & m, null);
+                if (waiting != 0)
+                    signalWaiter();
+                if (x == null)
+                    break;
+                else if (!consumeNext(s, x))
+                    break;
+            }
+        }
+        return k;
+    }
+
+    final boolean consumeNext(Subscriber<? super T> s, Object x) {
+        try {
+            @SuppressWarnings("unchecked") T y = (T) x;
+            if (s != null)
+                s.onNext(y);
+            return true;
+        } catch (Throwable ex) {
+            handleOnNext(s, ex);
+            return false;
+        }
+    }
+
+    /**
+     * Processes exception in Subscriber.onNext.
+     */
+    final void handleOnNext(Subscriber<? super T> s, Throwable ex) {
+        BiConsumer<? super Subscriber<? super T>, ? super Throwable> h;
+        try {
+            if ((h = onNextHandler) != null)
+                h.accept(s, ex);
+        } catch (Throwable ignore) {
+        }
+        closeOnError(s, ex);
+    }
+
+    /**
+     * Issues subscriber.onSubscribe if this is first signal.
+     */
+    final void subscribeOnOpen(Subscriber<? super T> s) {
+        if ((ctl & OPEN) == 0 && (getAndBitwiseOrCtl(OPEN) & OPEN) == 0)
+            consumeSubscribe(s);
+    }
+
+    final void consumeSubscribe(Subscriber<? super T> s) {
+        try {
+            if (s != null) // ignore if disabled
+                s.onSubscribe(this);
+        } catch (Throwable ex) {
+            closeOnError(s, ex);
+        }
+    }
+
+    /**
+     * Issues subscriber.onComplete unless already closed.
+     */
+    final void closeOnComplete(Subscriber<? super T> s) {
+        if ((getAndBitwiseOrCtl(CLOSED) & CLOSED) == 0)
+            consumeComplete(s);
+    }
+
+    final void consumeComplete(Subscriber<? super T> s) {
+        try {
+            if (s != null)
+                s.onComplete();
+        } catch (Throwable ignore) {
+        }
+    }
+
+    /**
+     * Issues subscriber.onError, and unblocks producer if needed.
+     */
+    final void closeOnError(Subscriber<? super T> s, Throwable ex) {
+        if ((getAndBitwiseOrCtl(ERROR | CLOSED) & CLOSED) == 0) {
+            if (ex == null)
+                ex = pendingError;
+            pendingError = null;  // detach
+            executor = null;      // suppress racing start calls
+            signalWaiter();
+            consumeError(s, ex);
+        }
+    }
+
+    final void consumeError(Subscriber<? super T> s, Throwable ex) {
+        try {
+            if (ex != null && s != null)
+                s.onError(ex);
+        } catch (Throwable ignore) {
+        }
+    }
+
+    // Blocking support
+
+    /**
+     * Unblocks waiting producer.
+     */
+    final void signalWaiter() {
+        Thread w;
+        waiting = 0;
+        if ((w = waiter) != null)
+            LockSupport.unpark(w);
+    }
+
+    /**
+     * Returns true if closed or space available.
+     * For ManagedBlocker.
+     */
+    public final boolean isReleasable() {
+        Object[] a; int cap;
+        return ((ctl & CLOSED) != 0 ||
+                ((a = array) != null && (cap = a.length) > 0 &&
+                 QA.getAcquire(a, (cap - 1) & tail) == null));
+    }
+
+    /**
+     * Helps or blocks until timeout, closed, or space available.
+     */
+    final void awaitSpace(long nanos) {
+        if (!isReleasable()) {
+            ForkJoinPool.helpAsyncBlocker(executor, this);
+            if (!isReleasable()) {
+                timeout = nanos;
+                try {
+                    ForkJoinPool.managedBlock(this);
+                } catch (InterruptedException ie) {
+                    timeout = INTERRUPTED;
+                }
+                if (timeout == INTERRUPTED)
+                    Thread.currentThread().interrupt();
+            }
+        }
+    }
+
+    /**
+     * Blocks until closed, space available or timeout.
+     * For ManagedBlocker.
+     */
+    public final boolean block() {
+        long nanos = timeout;
+        boolean timed = (nanos < Long.MAX_VALUE);
+        long deadline = timed ? System.nanoTime() + nanos : 0L;
+        while (!isReleasable()) {
+            if (Thread.interrupted()) {
+                timeout = INTERRUPTED;
+                if (timed)
+                    break;
+            }
+            else if (timed && (nanos = deadline - System.nanoTime()) <= 0L)
+                break;
+            else if (waiter == null)
+                waiter = Thread.currentThread();
+            else if (waiting == 0)
+                waiting = 1;
+            else if (timed)
+                LockSupport.parkNanos(this, nanos);
+            else
+                LockSupport.park(this);
+        }
+        waiter = null;
+        waiting = 0;
+        return true;
+    }
+
+    // VarHandle mechanics
+    static final VarHandle CTL;
+    static final VarHandle DEMAND;
+    static final VarHandle QA;
+
+    static {
+        try {
+            MethodHandles.Lookup l = MethodHandles.lookup();
+            CTL = l.findVarHandle(BufferedSubscription.class, "ctl",
+                                  int.class);
+            DEMAND = l.findVarHandle(BufferedSubscription.class, "demand",
+                                     long.class);
+            QA = MethodHandles.arrayElementVarHandle(Object[].class);
+        } catch (ReflectiveOperationException e) {
+            throw new ExceptionInInitializerError(e);
+        }
+
+        // Reduce the risk of rare disastrous classloading in first call to
+        // LockSupport.park: https://bugs.openjdk.java.net/browse/JDK-8074773
+        Class<?> ensureLoaded = LockSupport.class;
+    }
+}
+```
+
+### ThreadPerTaskExecutor
+
+```java
+/**  如果ForkJoinPool.commonPool()不支持并发，将使用该类 */
+private static final class ThreadPerTaskExecutor implements Executor {
+    ThreadPerTaskExecutor() {}      // 禁止使用构造函数创建类
+    public void execute(Runnable r) { new Thread(r).start(); }
+}
+```

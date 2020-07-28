@@ -100,12 +100,72 @@ public static int defaultBufferSize() {
 
 FLow 类的一种实现，可以在并发环境下使用
 
+JDK中的说明：
+
+SubmissionPublisher提供了使用Executor的构造函数，如果生产者是在独立线程中运行，并且能估计消费者数量，就使用Executors.newFixedThreadPool(int)固定线程数量的线程池，否则使用默认，ForkJoinPool.commonPool()
+
+SubmissionPublisher提供缓冲功能，能够使生产者和消费者以不同的速率运行，每个消费者独立使用一个缓冲区，缓冲区在首次使用的时候创建，提供了一个默认值256，并会根据需要扩大到最大值，容量通常扩大到最近的2的次幂或者支持的最大值
+
+SubmissionPublisher可以在多个线程之间共享，会在发布项目之前执行操作或者会发出一个happen-before信号给每个对应的消费者
+
+发布方法支持设置在缓冲区满时如何处理的不同策略，submit(Object)方法会阻塞直到有可用资源，这种用法最简单，但速度慢；offer方法虽然会丢弃项目，但提供了插入动作重试的机会
+
+如果任何Subscriber方法抛出异常，在其订阅将被取消
+
+方法consume(Consumer)简化了对常见情况的支持，其中订阅者的唯一操作是使用supplied的函数请求和处理所有项目
+
+此类还可以作为生成元素的子类的基类，并使用此类中的方法发布。例如，下面是一个周期性发布supplier生成元素的类。 （实际上，您可以添加独立启动和停止生成的方法，在发布者之间共享Executor等，或者使用SubmissionPublisher作为组件而不是超类。）
+
+```java
+class PeriodicPublisher<T> extends SubmissionPublisher<T> {
+   final ScheduledFuture<?> periodicTask;
+   final ScheduledExecutorService scheduler;
+   PeriodicPublisher(Executor executor, int maxBufferCapacity,
+                     Supplier<? extends T> supplier,
+                     long period, TimeUnit unit) {
+     super(executor, maxBufferCapacity);
+     scheduler = new ScheduledThreadPoolExecutor(1);
+     periodicTask = scheduler.scheduleAtFixedRate(
+       () -> submit(supplier.get()), 0, period, unit);
+   }
+   public void close() {
+     periodicTask.cancel(false);
+     scheduler.shutdown();
+     super.close();
+   }
+ }
+```
+
+以下是Flow.Processor实现的示例，为了简化说明，使用单步向publisher发起请求，更合适的版本可以使用submit方法或者其他实用方法来监控流量
+
+```java
+class TransformProcessor<S,T> extends SubmissionPublisher<T>
+    implements Flow.Processor<S,T> {
+    final Function<? super S, ? extends T> function;
+    Flow.Subscription subscription;
+    TransformProcessor(Executor executor, int maxBufferCapacity,
+                       Function<? super S, ? extends T> function) {
+        super(executor, maxBufferCapacity);
+        this.function = function;
+    }
+    public void onSubscribe(Flow.Subscription subscription) {
+        (this.subscription = subscription).request(1);
+    }
+    public void onNext(S item) {
+        subscription.request(1);
+        submit(function.apply(item));
+    }
+    public void onError(Throwable ex) { closeExceptionally(ex); }
+    public void onComplete() { close(); }
+}
+```
+
 ### 内部类
 
 #### ConsumerSubscriber
 
 ```java
-/** 订阅者 */
+/** 订阅者,供内部使用*/
 static final class ConsumerSubscriber<T> implements Subscriber<T> {
     final CompletableFuture<Void> status;
     final Consumer<? super T> consumer;
@@ -116,18 +176,24 @@ static final class ConsumerSubscriber<T> implements Subscriber<T> {
     }
     public final void onSubscribe(Subscription subscription) {
         this.subscription = subscription;
+        //如果元素已经消费完成，那么取消订阅
         status.whenComplete((v, e) -> subscription.cancel());
+        //没有完成继续请求
         if (!status.isDone())
             subscription.request(Long.MAX_VALUE);
     }
+    //发送错误时候的处理
     public final void onError(Throwable ex) {
         status.completeExceptionally(ex);
     }
+    //元素消费完成时候的处理
     public final void onComplete() {
         status.complete(null);
     }
+    //有新元素的时候会被调用
     public final void onNext(T item) {
         try {
+            //执行Consumer函数
             consumer.accept(item);
         } catch (Throwable ex) {
             subscription.cancel();
@@ -154,9 +220,10 @@ static final class ConsumerTask<T> extends ForkJoinTask<Void>
 }
 ```
 
-### BufferedSubscription
+#### BufferedSubscription
 
 ```java
+//基于数组的可扩展的环形缓冲区，通过CAS原子操作来实现put和take元素
 @jdk.internal.vm.annotation.Contended
 static final class BufferedSubscription<T>
     implements Subscription, ForkJoinPool.ManagedBlocker {
@@ -633,7 +700,7 @@ static final class BufferedSubscription<T>
 }
 ```
 
-### ThreadPerTaskExecutor
+#### ThreadPerTaskExecutor
 
 ```java
 /**  如果ForkJoinPool.commonPool()不支持并发，将使用该类 */

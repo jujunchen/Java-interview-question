@@ -223,39 +223,46 @@ static final class ConsumerTask<T> extends ForkJoinTask<Void>
 #### BufferedSubscription
 
 ```java
-//基于数组的可扩展的环形缓冲区，通过CAS原子操作来实现put和take元素
+//基于数组的可扩展的环形缓冲区，通过CAS原子操作来实现插入和获取元素
+//在任何时间内最多只有一个活动的消费者任务
+//publisher通过锁来保证单个生产者
+//生成者和消费者之间的同步依赖于volatile修饰的ctl、demand、waiting变量
+//使用ctl管理状态
+//缓存区开始很小，只在需要的时候扩容
+//使用了Contended类避免CPU伪共享问题
+//当生成者和消费者以不同的速度运行时，会出现失衡，通过人为细分一些消费者方法，包括隔离所有subscriber回调
 @jdk.internal.vm.annotation.Contended
 static final class BufferedSubscription<T>
     implements Subscription, ForkJoinPool.ManagedBlocker {
-    long timeout;                      // Long.MAX_VALUE if untimed wait
-    int head;                          // next position to take
-    int tail;                          // next position to put
-    final int maxCapacity;             // max buffer size
-    volatile int ctl;                  // atomic run state flags
-    Object[] array;                    // buffer
+    long timeout;                      // Long.MAX_VALUE 表示一直等待
+    int head;                          // 下一个获取的位置
+    int tail;                          // 下一个插入的位置
+    final int maxCapacity;             // 最大缓冲大小
+    volatile int ctl;                  // 以volatile方式运行状态标志
+    Object[] array;                    // 缓冲数组
     final Subscriber<? super T> subscriber;
     final BiConsumer<? super Subscriber<? super T>, ? super Throwable> onNextHandler;
-    Executor executor;                 // null on error
-    Thread waiter;                     // blocked producer thread
-    Throwable pendingError;            // holds until onError issued
-    BufferedSubscription<T> next;      // used only by publisher
-    BufferedSubscription<T> nextRetry; // used only by publisher
+    Executor executor;                 // 发生错误为null
+    Thread waiter;                     // 生成者线程被阻塞
+    Throwable pendingError;            // onError发生时会赋值该变量
+    BufferedSubscription<T> next;      // publisher使用
+    BufferedSubscription<T> nextRetry; // publisher使用
 
-    @jdk.internal.vm.annotation.Contended("c") // segregate
-    volatile long demand;              // # unfilled requests
+    @jdk.internal.vm.annotation.Contended("c") // 隔离CPU缓存行
+    volatile long demand;              // 未获取的请求
     @jdk.internal.vm.annotation.Contended("c")
-    volatile int waiting;              // nonzero if producer blocked
+    volatile int waiting;              // 如果生产者被阻塞，则不为零
 
-    // ctl bit values
-    static final int CLOSED   = 0x01;  // if set, other bits ignored
-    static final int ACTIVE   = 0x02;  // keep-alive for consumer task
-    static final int REQS     = 0x04;  // (possibly) nonzero demand
-    static final int ERROR    = 0x08;  // issues onError when noticed
-    static final int COMPLETE = 0x10;  // issues onComplete when done
-    static final int RUN      = 0x20;  // task is or will be running
-    static final int OPEN     = 0x40;  // true after subscribe
+    // ctl 16进制值
+    static final int CLOSED   = 0x01;  // 设置了，忽略其他值
+    static final int ACTIVE   = 0x02;  // 保存消费者任务一直存活
+    static final int REQS     = 0x04;  // 非零请求
+    static final int ERROR    = 0x08;  // 发生错误时，调用onError
+    static final int COMPLETE = 0x10;  // 当完成时，调用onComplete
+    static final int RUN      = 0x20;  // 任务正在跑或刚开始跑
+    static final int OPEN     = 0x40;  // 订阅后位true
 
-    static final long INTERRUPTED = -1L; // timeout vs interrupt sentinel
+    static final long INTERRUPTED = -1L; // 超时或者中断标志
 
     BufferedSubscription(Subscriber<? super T> subscriber,
                          Executor executor,

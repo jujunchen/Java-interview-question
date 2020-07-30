@@ -254,7 +254,7 @@ static final class BufferedSubscription<T>
     volatile int waiting;              // 如果生产者被阻塞，则不为零
 
     // ctl 16进制值
-    static final int CLOSED   = 0x01;  // 设置了，忽略其他值
+    static final int CLOSED   = 0x01;  // 设置了，忽略其他位
     static final int ACTIVE   = 0x02;  // 保存消费者任务一直存活
     static final int REQS     = 0x04;  // 非零请求
     static final int ERROR    = 0x08;  // 发生错误时，调用onError
@@ -301,29 +301,28 @@ static final class BufferedSubscription<T>
         return DEMAND.compareAndSet(this, cmp, val);
     }
 
-    // Utilities used by SubmissionPublisher
+    // SubmissionPublisher实用方法
 
     /**
-     * Returns true if closed (consumer task may still be running).
+     * 如果关闭了返回true (消费任务可能还在运行中).
      */
     final boolean isClosed() {
         return (ctl & CLOSED) != 0;
     }
 
     /**
-     * Returns estimated number of buffered items, or negative if
-     * closed.
+     * 返回估计的元素数量，如果关闭了返回-1
      */
     final int estimateLag() {
         int c = ctl, n = tail - head;
         return ((c & CLOSED) != 0) ? -1 : (n < 0) ? 0 : n;
     }
 
-    // Methods for submitting items
+    // 提交元素的方法
 
     /**
-     * Tries to add item and start consumer task if necessary.
-     * @return negative if closed, 0 if saturated, else estimated lag
+     * 尝试插入元素，并启动消费任务
+     * @return 如果关闭返回-1，0表示满了
      */
     final int offer(T item, boolean unowned) {
         Object[] a;

@@ -240,9 +240,9 @@ static final class BufferedSubscription<T>
     final int maxCapacity;             // 最大缓冲大小
     volatile int ctl;                  // 以volatile方式运行状态标志
     Object[] array;                    // 缓冲数组
-    final Subscriber<? super T> subscriber;
-    final BiConsumer<? super Subscriber<? super T>, ? super Throwable> onNextHandler;
-    Executor executor;                 // 发生错误为null
+    final Subscriber<? super T> subscriber; //消费者
+    final BiConsumer<? super Subscriber<? super T>, ? super Throwable> onNextHandler; //用于处理异常
+    Executor executor;                 // 线程池，发生错误为null
     Thread waiter;                     // 生成者线程被阻塞
     Throwable pendingError;            // onError发生时会赋值该变量
     BufferedSubscription<T> next;      // publisher使用
@@ -279,19 +279,24 @@ static final class BufferedSubscription<T>
 
     // Wrappers for some VarHandle methods
 
+    //cas更新ctl变量
     final boolean weakCasCtl(int cmp, int val) {
         return CTL.weakCompareAndSet(this, cmp, val);
     }
 
+    //进行或计算
     final int getAndBitwiseOrCtl(int bits) {
         return (int)CTL.getAndBitwiseOr(this, bits);
     }
 
+    //这段代码会将demand的值减去指定的k
     final long subtractDemand(int k) {
         long n = (long)(-k);
+        //为什么还要再加n呢？
         return n + (long)DEMAND.getAndAdd(this, n);
     }
 
+    //cas设置demand值
     final boolean casDemand(long cmp, long val) {
         return DEMAND.compareAndSet(this, cmp, val);
     }

@@ -1198,6 +1198,8 @@ static final int roundCapacity(int cap) {
 #### doOffer
 
 ```java
+//submit 和offer的公共实现
+//submit方法nanos == Long.MAX_VALUE
 private int doOffer(T item, long nanos,
                     BiPredicate<Subscriber<? super T>, ? super T> onDrop) {
     if (item == null) throw new NullPointerException();
@@ -1217,24 +1219,26 @@ private int doOffer(T item, long nanos,
             do {
                 next = b.next;
                 int stat = b.offer(item, unowned);
-                if (stat == 0) {              // saturated; add to retry list
-                    b.nextRetry = null;       // avoid garbage on exceptions
+                if (stat == 0) {              // 缓冲区已满，加入重试列表
+                    b.nextRetry = null;       // 先重置原来的nextRetry变量
                     if (rtail == null)
                         retries = b;
                     else
                         rtail.nextRetry = b;
                     rtail = b;
                 }
-                else if (stat < 0)            // closed
-                    cleanMe = true;           // remove later
+                else if (stat < 0)            // 缓存区已经关闭
+                    cleanMe = true;           // 标记清理，将在后面清理
                 else if (stat > lag)
                     lag = stat;
-            } while ((b = next) != null);
+            } while ((b = next) != null);  //循环处理，直到处理完成
 
-            if (retries != null || cleanMe)
+            if (retries != null || cleanMe)  //重试列表不为空，或者清理标志为true
+                //重试发布
                 lag = retryOffer(item, nanos, onDrop, retries, lag, cleanMe);
         }
     }
+    //已经关闭抛出异常Closed
     if (complete)
         throw new IllegalStateException("Closed");
     else
@@ -1245,21 +1249,26 @@ private int doOffer(T item, long nanos,
 #### retryOffer
 
 ```java
+//重试发布元素
 private int retryOffer(T item, long nanos,
                        BiPredicate<Subscriber<? super T>, ? super T> onDrop,
                        BufferedSubscription<T> retries, int lag,
                        boolean cleanMe) {
     for (BufferedSubscription<T> r = retries; r != null;) {
         BufferedSubscription<T> nextRetry = r.nextRetry;
+        //将缓冲区存入临时变量后，及时断开连接
         r.nextRetry = null;
         if (nanos > 0L)
+            //阻塞等待
             r.awaitSpace(nanos);
+        //重试发布
         int stat = r.retryOffer(item);
+        //如果还是发布失败，但自定义了BiPredicate函数，会根据自定义规则进行判断，为true会再重试一次
         if (stat == 0 && onDrop != null && onDrop.test(r.subscriber, item))
             stat = r.retryOffer(item);
-        if (stat == 0)
-            lag = (lag >= 0) ? -1 : lag - 1;
-        else if (stat < 0)
+        if (stat == 0) //缓冲区满了
+            lag = (lag >= 0) ? -1 : lag - 1;   //这里有点奇怪？
+        else if (stat < 0)  //关闭了，标志为清理
             cleanMe = true;
         else if (lag >= 0 && stat > lag)
             lag = stat;

@@ -1849,6 +1849,9 @@ public class MyProperties {
 
 - my.service.enabled，默认为false
 - my.service.remote-address，能够强制转成`String`
+- my.service.security.username
+- my.service.security.password
+- my.service.security.roles String类型的列表，默认是USER
 
 #### 构造函数绑定
 

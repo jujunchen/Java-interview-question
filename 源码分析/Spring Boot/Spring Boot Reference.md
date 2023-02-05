@@ -1853,9 +1853,146 @@ public class MyProperties {
 - my.service.security.password
 - my.service.security.roles String类型的列表，默认是USER
 
+> 映射到Spring Boot中可用的@ConfigurationProperties类的properties是公共API，这些类是通过properties文件、YAML文件、环境变量和其他机制配置的，但类本身的访问器（getters/setters）并不打算直接使用。
+
+> 这种安排依赖于默认的空构造函数，getter和setter通常是强制性的，因为绑定是通过标准的JavaBeans属性描述符进行的，就像在SpringMVC中一样。在下列情况下，可以省略setter：
+>
+> - Maps，只要它们被初始化，就需要getter，但不一定需要setter，因为它们可以被绑定器改变。
+> - 可以通过索引（通常使用 YAML）或使用单个逗号分隔值（属性）来访问集合和数组。在后一种情况下，setter 是强制性的。我们建议始终为此类类型添加一个 setter。如果您初始化一个集合，请确保它不是不可变的（如前例所示）。
+> - 如果嵌套的 POJO 属性被初始化（如`Security`前面示例中的字段），则不需要 setter。如果希望绑定器使用其默认构造函数动态创建实例，则需要setter。
+>
+> 有些人使用 Project Lombok 来自动添加 getter 和 setter。确保 Lombok 不会为此类类型生成任何特殊的构造函数，因为容器会自动使用它来实例化对象。
+>
+> 最后，只考虑标准 Java Bean 属性，不支持绑定静态属性。
+
 #### 构造函数绑定
 
+上一节中的示例可以以不可变的方式重写，如以下示例所示：
+
+```java
+import java.net.InetAddress;
+import java.util.List;
+
+import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.boot.context.properties.ConstructorBinding;
+import org.springframework.boot.context.properties.bind.DefaultValue;
+
+@ConstructorBinding
+@ConfigurationProperties("my.service")
+public class MyProperties {
+
+    private final boolean enabled;
+
+    private final InetAddress remoteAddress;
+
+    private final Security security;
+
+    public MyProperties(boolean enabled, InetAddress remoteAddress, Security security) {
+        this.enabled = enabled;
+        this.remoteAddress = remoteAddress;
+        this.security = security;
+    }
+
+    public boolean isEnabled() {
+        return this.enabled;
+    }
+
+    public InetAddress getRemoteAddress() {
+        return this.remoteAddress;
+    }
+
+    public Security getSecurity() {
+        return this.security;
+    }
+
+    public static class Security {
+
+        private final String username;
+
+        private final String password;
+
+        private final List<String> roles;
+
+        public Security(String username, String password, @DefaultValue("USER") List<String> roles) {
+            this.username = username;
+            this.password = password;
+            this.roles = roles;
+        }
+
+        public String getUsername() {
+            return this.username;
+        }
+
+        public String getPassword() {
+            return this.password;
+        }
+
+        public List<String> getRoles() {
+            return this.roles;
+        }
+
+    }
+
+}
+```
+
+在此设置中，`@ConstructorBinding`注解用于指示应使用构造函数绑定。这意味着绑定器将期望找到一个带有您希望绑定的参数的构造函数。如果您使用的是 Java 16 或更高版本，构造函数绑定可以与记录一起使用。在这种情况下，除非您的记录有多个构造函数，否则没有必要使用`@ConstructorBinding`.
+
+类的嵌套成员`@ConstructorBinding`（如上`Security`例）也将通过其构造函数进行绑定。
+
+可以使用`@DefaultValue`构造函数参数指定默认值，或者在使用 Java 16 或更高版本时使用记录组件指定默认值。转换服务将用于将`String`值强制转换为缺失属性的目标类型。
+
+参考前面的示例，如果没有属性绑定到`Security`，则该`MyProperties`实例将包含 一个`null`值的`security`。要使它包含一个非空的实例，`Security`即使没有属性绑定到它（使用 Kotlin 时，这将需要将 的`username`和`password`参数`Security`声明为可空的，因为它们没有默认值），使用空`@DefaultValue`注解：
+
+```java
+public MyProperties(boolean enabled, InetAddress remoteAddress, @DefaultValue Security security) {
+    this.enabled = enabled;
+    this.remoteAddress = remoteAddress;
+    this.security = security;
+}
+```
+
+> 🚩  要使用构造函数绑定，必须使用`@EnableConfigurationProperties`或`@ConfigurationProperties`来启用类。您不能对由常规 Spring 机制创建的 bean 使用构造函数绑定（例如`@Component`bean、使用`@Bean`方法创建的 bean 或使用 `@Import`加载的 bean）
+
+> 📌  如果您的类有多个构造函数，您也可以在应该绑定的构造函数上直接使用@ConstructorBinding
+
+> 🚩  不建议将`java.util.Optional`与`@ConfigurationProperties`一起使用，因为它主要用作返回类型。因此，它不太适合配置属性注入。为了与其他类型的属性保持一致，如果您确实声明了一个`Optional`属性并且它没有值，那么将绑定 `null`一个空值。
+
 #### 启用@ConfigurationProperties注解类型
+
+Spring Boot 提供基础设施来绑定`@ConfigurationProperties`类型并将它们注册为 beans。您可以逐个类地启用配置属性，也可以启用以类似于组件扫描的方式工作的配置属性扫描。
+
+有时，带有注解的类`@ConfigurationProperties`可能不适合扫描，例如，如果您正在开发自己的自动配置或您希望有条件地启用它们。在这些情况下，使用`@EnableConfigurationProperties`注解指定要处理的类型列表。这可以在任何`@Configuration`类上完成，如以下示例所示：
+
+```java
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.context.annotation.Configuration;
+
+@Configuration(proxyBeanMethods = false)
+@EnableConfigurationProperties(SomeProperties.class)
+public class MyConfiguration {
+
+}
+```
+
+要使用配置属性扫描，请将`@ConfigurationPropertiesScan`注解添加到您的应用程序。通常，它被添加到带有`@SpringBootApplication`的类中，但它可以添加到任何`@Configuration`类中。默认情况下，将从声明注解的类的包中进行扫描。如果要定义要扫描的指定包，可以按照以下示例所示进行操作：
+
+```java
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.boot.context.properties.ConfigurationPropertiesScan;
+
+@SpringBootApplication
+@ConfigurationPropertiesScan({ "com.example.app", "com.example.another" })
+public class MyApplication {
+
+}
+```
+
+> 当`@ConfigurationProperties`使用配置属性扫描或通过 `@EnableConfigurationProperties`注册 bean时，bean 有一个约定名称：`<prefix>-<fqn>`，其中`<prefix>`是`@ConfigurationProperties`中指定的环境键前缀，`<fqn>`是 bean 的完全限定名称。如果不提供任何前缀，则仅使用 bean 的完全限定名称。
+>
+> 上面示例中的 bean 名称是`com.example.app-com.example.app.SomeProperties`.
+
+我们建议`@ConfigurationProperties`只处理环境，特别是不要从上下文中注入其他 beans。对于极端情况，可以使用 setter 注入或`*Aware`框架提供的任何接口（例如，`EnvironmentAware`如果您需要访问`Environment`）。如果您仍想使用构造函数注入其他 bean，则配置属性 bean 必须注释`@Component`并使用基于 JavaBean 的属性绑定。
 
 #### 使用@ConfigurationProperties 注解类型
 

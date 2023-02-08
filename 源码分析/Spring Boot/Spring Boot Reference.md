@@ -2727,29 +2727,375 @@ $ java -jar myapp.jar --debug
 | Specific file       | *(none)*            | `my.log`   | 写入指定的日志文件。名称可以是确切的位置或相对于当前目录。   |
 | *(none)*            | Specific directory  | `/var/log` | 将`spring.log`写入指定目录。名称可以是确切的位置或相对于当前目录。 |
 
-日志文件在达到10MB时会重头开始，与控制台输出一样，默认情况下会记录ERROR级别、WARN级别和INFO级别的消息。
+日志文件在达到10MB时会重新开始写入，与控制台输出一样，默认情况下会记录ERROR级别、WARN级别和INFO级别的消息。
 
 > 日志记录配置独立于实际的日志记录基础结构。因此，特定的配置键（如`logback.configurationFile` for logback）不会由springBoot管理。
 
 ### 5.4.4 文件周期
 
+如果使用Logback，则可以使用application.properties或application.yaml文件微调日志周期设置。对于所有其他日志记录系统，您需要自己直接配置周期设置（例如，如果使用Log4j2，则可以添加`Log4j2.xml`或`Log4j2-pring.xml`文件）。
+
+支持以下周期性配置：
+
+| Name                                                   | Description                                 |
+| :----------------------------------------------------- | :------------------------------------------ |
+| `logging.logback.rollingpolicy.file-name-pattern`      | 用于创建日志存档的文件名模式。              |
+| `logging.logback.rollingpolicy.clean-history-on-start` | 应用程序启动时应进行日志存档清理。          |
+| `logging.logback.rollingpolicy.max-file-size`          | 存档前日志文件的最大大小。                  |
+| `logging.logback.rollingpolicy.total-size-cap`         | 删除日志存档文件之前可以使用的最大大小。    |
+| `logging.logback.rollingpolicy.max-history`            | 要保留的存档日志文件的最大数量（默认为7）。 |
+
 ### 5.4.5 日志级别
+
+所有支持的日志记录系统都可以在Spring环境中设置日志记录程序级别（例如，在application.properties中），通过使用`logging.level.<logger-name>=<level>`，其中级别是TRACE、DEBUG、INFO、WARN、ERROR、FATAL或OFF之一。`root`日志记录程序可以通过使用`logging.level.root`进行配置。
+
+如下是`application.properties`中的日志配置：
+
+```yaml
+logging.level.root=warn
+logging.level.org.springframework.web=debug
+logging.level.org.hibernate=error
+```
+
+还可以使用环境变量设置日志记录级别。例如，`LOGGING_LEVEL_ORG_SPRINGFRAMEWORK_WEB=DEBUG`将设置`org.springframework.web`为`DEBUG`。
+
+> 上述方法仅适用于包级日志记录。由于宽松绑定总是将环境变量转换为小写，因此不可能以这种方式为单个类配置日志记录。如果需要给类配置日志，你可以使用[`SPRING_APPLICATION_JSON`](https://docs.spring.io/spring-boot/docs/3.0.2/reference/htmlsingle/#features.external-config.application-json) 。
 
 ### 5.4.6 日志组
 
+能够将相关的记录器分组在一起，以便可以同时配置它们，这通常很有用。例如，您可能通常会更改所有Tomcat相关记录器的日志记录级别，但您不容易记住顶级包。
+
+为了帮助实现这一点，Spring Boot允许您在Spring环境中定义日志组。例如，以下是如何通过将“tomcat”组添加到`application.properties`：
+
+```yaml
+logging.group.tomcat=org.apache.catalina,org.apache.coyote,org.apache.tomcat
+```
+
+定义后，您可以使用单行更改组中所有记录器的级别：
+
+```
+logging.level.tomcat=trace
+```
+
+Spring Boot包括以下预定义的日志记录组，可以立即使用：
+
+| Name | Loggers                                                      |
+| :--- | :----------------------------------------------------------- |
+| web  | `org.springframework.core.codec`, `org.springframework.http`, `org.springframework.web`, `org.springframework.boot.actuate.endpoint.web`, `org.springframework.boot.web.servlet.ServletContextInitializerBeans` |
+| sql  | `org.springframework.jdbc.core`, `org.hibernate.SQL`, `org.jooq.tools.LoggerListener` |
+
 ### 5.4.7 使用日志 ShutDown 钩子
+
+为了在应用程序终止时释放日志记录资源，提供了在JVM退出时触发日志系统清理的关闭挂钩。除非将应用程序部署为war文件，否则会自动注册此关闭挂钩。如果应用程序具有复杂的上下文层次结构，则关闭挂钩可能无法满足您的需要。如果没有，请禁用关闭挂钩并调查底层日志系统直接提供的选项。例如，Logback提供了上下文选择器，允许在自己的上下文中创建每个Logger。你可以使用`logging.register-shutdown-hook`关闭钩子，设置`false`关闭注册。
+
+```properties
+logging.register-shutdown-hook=false
+```
 
 ### 5.4.8 自定义日志配置
 
+可以通过在类路径中包含适当的库来激活各种日志记录系统，并且可以通过在路径的根目录中或在以下Spring Environment属性指定的位置提供适当的配置文件来进一步定制：`logging.config`。
+
+您可以强制Spring Boot使用特定的日志记录系统，使用`org.springframework.boot.logging.LoggingSystem`。该值应该是LoggingSystem实现的完全限定类名。您还可以使用值`none`完全禁用Spring Boot的日志记录配置。
+
+> 由于日志记录是在创建ApplicationContext之前初始化的，因此无法从Spring`@Configuration`文件中的`@PropertySources`控制日志记录。更改日志记录系统或完全禁用日志记录系统的唯一方法是通过系统配置。
+
+根据您的日志记录系统，将加载以下文件：
+
+| Logging System          | Customization                                                |
+| :---------------------- | :----------------------------------------------------------- |
+| Logback                 | `logback-spring.xml`, `logback-spring.groovy`, `logback.xml`, or `logback.groovy` |
+| Log4j2                  | `log4j2-spring.xml` or `log4j2.xml`                          |
+| JDK (Java Util Logging) | `logging.properties`                                         |
+
+> 如果可能，我们建议您在日志配置中使用`-spring`变量（例如，logback-spring.xml而不是logback.xml）。如果您使用标准配置位置，spring无法完全控制日志初始化。
+
+> Java Util Logging存在已知的类加载问题，在从“可执行jar”运行时会导致问题。我们建议您在从“可执行jar”运行时尽可能避免使用它。
+
+为了帮助定制，提供了一些其他配置从Spring环境传输到系统配置，如下表所述：
+
+| Spring Environment                  | System Property                 | Comments                                                     |
+| :---------------------------------- | :------------------------------ | :----------------------------------------------------------- |
+| `logging.exception-conversion-word` | `LOG_EXCEPTION_CONVERSION_WORD` | 记录异常时使用的转换字。                                     |
+| `logging.file.name`                 | `LOG_FILE`                      | 如果已定义，则在默认日志配置中使用。                         |
+| `logging.file.path`                 | `LOG_PATH`                      | 如果已定义，则在默认日志配置中使用。                         |
+| `logging.pattern.console`           | `CONSOLE_LOG_PATTERN`           | 要在控制台上使用的日志模式（stdout）。                       |
+| `logging.pattern.dateformat`        | `LOG_DATEFORMAT_PATTERN`        | 日志日期格式的追加模式。                                     |
+| `logging.charset.console`           | `CONSOLE_LOG_CHARSET`           | 用于控制台日志记录的字符集。                                 |
+| `logging.pattern.file`              | `FILE_LOG_PATTERN`              | 要在文件中使用的日志模式（如果启用了“LOG_FILE”）。           |
+| `logging.charset.file`              | `FILE_LOG_CHARSET`              | 用于文件日志记录的字符集（如果启用了“LOG_FILE”）。           |
+| `logging.pattern.level`             | `LOG_LEVEL_PATTERN`             | 呈现日志级别时使用的格式（默认为“`%5p`”）。                  |
+| `PID`                               | `PID`                           | 当前进程ID（如果可能，并且尚未定义为操作系统环境变量时发现）。 |
+
+如果使用Logback，还将传输以下配置：
+
+| Spring Environment                                     | System Property                                | Comments                                                     |
+| :----------------------------------------------------- | :--------------------------------------------- | :----------------------------------------------------------- |
+| `logging.logback.rollingpolicy.file-name-pattern`      | `LOGBACK_ROLLINGPOLICY_FILE_NAME_PATTERN`      | 滚动的日志文件名模式 (默认`${LOG_FILE}.%d{yyyy-MM-dd}.%i.gz`). |
+| `logging.logback.rollingpolicy.clean-history-on-start` | `LOGBACK_ROLLINGPOLICY_CLEAN_HISTORY_ON_START` | 是否在启动时清除存档日志文件。                               |
+| `logging.logback.rollingpolicy.max-file-size`          | `LOGBACK_ROLLINGPOLICY_MAX_FILE_SIZE`          | 最大日志文件大小。                                           |
+| `logging.logback.rollingpolicy.total-size-cap`         | `LOGBACK_ROLLINGPOLICY_TOTAL_SIZE_CAP`         | 要保留的日志备份的总大小。                                   |
+| `logging.logback.rollingpolicy.max-history`            | `LOGBACK_ROLLINGPOLICY_MAX_HISTORY`            | 要保留的存档日志文件的最大数量。                             |
+
+所有受支持的日志记录系统在解析其配置文件时都可以参考系统配置。有关示例，请参见spring-bot.jar中的默认配置：
+
+- [Logback](https://github.com/spring-projects/spring-boot/tree/v3.0.2/spring-boot-project/spring-boot/src/main/resources/org/springframework/boot/logging/logback/defaults.xml)
+- [Log4j 2](https://github.com/spring-projects/spring-boot/tree/v3.0.2/spring-boot-project/spring-boot/src/main/resources/org/springframework/boot/logging/log4j2/log4j2.xml)
+- [Java Util logging](https://github.com/spring-projects/spring-boot/tree/v3.0.2/spring-boot-project/spring-boot/src/main/resources/org/springframework/boot/logging/java/logging-file.properties)
+
+如果要在日志属性中使用占位符，则应使用[Spring Boot的语法](https://docs.spring.io/spring-boot/docs/3.0.2/reference/htmlsingle/#features.external-config.files.property-placeholders)，而不是底层框架的语法。值得注意的是，如果使用Logback，则应使用`:`作为属性名称与其默认值之间的分隔符，而不要使用`:-`。
+
+>  通过仅覆盖`LOG_LEVEL_PATTERN`（或Logback 的 `logging.pattern.level`），可以将MDC和其他特殊内容添加到日志行。如你使用`logging.pattern.level=user:%X{user} %5p`，那么默认日志格式包含“user”的MDC条目（如果存在），如下例所示。
+>
+> ```
+> 2019-08-30 12:30:04.031 user:someone INFO 22174 --- [  nio-8080-exec-0] demo.Controller
+> Handling authenticated request
+> ```
+
+
+
 ### 5.4.9 Logback扩展
+
+Spring Boot包括许多Logback扩展，可以帮助进行高级配置。您可以在`logback-spring.xml`配置文件中使用这些扩展名。
+
+> 因为标准`logback.xml`配置文件很早就加载，您需要使用`logback-spring.xml`或定义`logging.config`属性
+
+扩展不能用于Logback的[配置扫描](https://logback.qos.ch/manual/configuration.html#autoScan)。如果尝试这样做，则对配置文件进行更改会导致类似以下错误会被记录：
+
+```
+ERROR in ch.qos.logback.core.joran.spi.Interpreter@4:71 - no applicable action for [springProperty], current ElementPath is [[configuration][springProperty]]
+ERROR in ch.qos.logback.core.joran.spi.Interpreter@4:71 - no applicable action for [springProfile], current ElementPath is [[configuration][springProfile]]
+```
+
+
 
 #### Profile指定配置
 
-#### 环境属性
+`<springProfile>`标记允许您根据激活的Spring配置文件选择性地包括或排除配置部分。`<configuration>`元素中的任何位置都支持配置文件部分。使用`name`属性指定哪个配置文件接受配置。`<springProfile>`标记可以包含profile文件名称（例如`staging`）或profile文件表达式。profile表达式允许表达更复杂的逻辑，例如，`production & (eu-central | eu-west)`,查看 [Spring Framework指南](https://docs.spring.io/spring-framework/docs/6.0.4/reference/html/core.html#beans-definition-profiles-java)查看详细信息。以下列表显示了三个示例配置文件：
+
+```xml
+<springProfile name="staging">
+    <!-- configuration to be enabled when the "staging" profile is active -->
+</springProfile>
+
+<springProfile name="dev | staging">
+    <!-- configuration to be enabled when the "dev" or "staging" profiles are active -->
+</springProfile>
+
+<springProfile name="!production">
+    <!-- configuration to be enabled when the "production" profile is not active -->
+</springProfile>
+```
+
+
+
+#### 环境属性配置
+
+`<springProperty>`标记允许您从Spring环境中公开配置，以便在Logback中使用。如果您想从Logback配置中的访问application.properties文件的值，那么这样做很有用。该标记的工作方式与Logback的标准`<property>`标记类似。可以指定属性的`source`（从环境中），而不是指定直接值。如果您需要将属性存储在`local`范围以外的其他位置，你可以使用`scope`属性。如果需要回退值（为在`Environment`环境中设置），你可以使用`defaultValue`属性，以下示例显示如何公开配置以在Logback中使用：
+
+```xml
+<springProperty scope="context" name="fluentHost" source="myapp.fluentd.host"
+        defaultValue="localhost"/>
+<appender name="FLUENT" class="ch.qos.logback.more.appenders.DataFluentAppender">
+    <remoteHost>${fluentHost}</remoteHost>
+    ...
+</appender>
+```
+
+> `source`必须使用kebab格式指定（例如`my.property-name`）。然而，可以使用宽松的规则将属性添加到`Environment`环境中。
+
+### 5.4.10 Log4j2 扩展
+
+Spring Boot包括对Log4j2的许多扩展，可以帮助进行高级配置，您可以在任何`log4j2-spring.xml`配置文件中使用这些扩展。
+
+> 由于标准`log4j2.xml`配置文件加载得太早，因此不能在其中使用扩展。您需要使用`log4j2-spring.xml`或定义`logging.config`属性。
+>
+> 这些扩展取代了Log4J提供的[Spring Boot支持](https://logging.apache.org/log4j/2.x/log4j-spring-boot/index.html)。您应该确保在构建中不包含`org.apache.logging.log4j:log4j-spring-boot`模块。
+
+#### Profile 指定配置
+
+`<springProfile>`标记允许您根据激活的Spring配置文件选择性地包括或排除配置部分。`<configuration>`元素中的任何位置都支持配置文件部分。使用`name`属性指定哪个配置文件接受配置。`<springProfile>`标记可以包含profile文件名称（例如`staging`）或profile文件表达式。profile表达式允许表达更复杂的逻辑，例如，`production & (eu-central | eu-west)`,查看 [Spring Framework指南](https://docs.spring.io/spring-framework/docs/6.0.4/reference/html/core.html#beans-definition-profiles-java)查看详细信息。以下列表显示了三个示例配置文件：
+
+```xml
+<SpringProfile name="staging">
+    <!-- configuration to be enabled when the "staging" profile is active -->
+</SpringProfile>
+
+<SpringProfile name="dev | staging">
+    <!-- configuration to be enabled when the "dev" or "staging" profiles are active -->
+</SpringProfile>
+
+<SpringProfile name="!production">
+    <!-- configuration to be enabled when the "production" profile is not active -->
+</SpringProfile>
+```
+
+
+
+#### 环境属性查找
+
+如果您想在Log4j2配置中引用Spring环境中的属性，可以使用`spring:`[前缀查找](https://logging.apache.org/log4j/2.x/manual/lookups.html)。如果您想访问Log4j2配置中`application.properties`文件中的值，那么这样做很有用。
+
+以下示例显示如何设置名为`applicationName`的Log4j2属性，该属性从spring环境中读取`spring.application.name`：
+
+```xml
+<Properties>
+    <Property name="applicationName">${spring:spring.application.name}</Property>
+</Properties>
+```
+
+> 查找关键字应该以kebab 格式（例如 my.property-name）。
+
+#### Log4j2 系统配置
+
+Log4j2支持许多可用于配置各种项目的[系统配置](https://logging.apache.org/log4j/2.x/manual/configuration.html#SystemProperties)。`log4j2.skipJansi`系统属性可用于配置`ConsoleAppender`是否将尝试在Windows上使用Jansi输出流。
+
+Log4j2初始化后加载的所有系统配置都可以从Spring环境中获得。例如，可以将`log4j2.skipJansi=false`添加到`application.properties`文件中，以便`ConsoleAppender`在Windows上使用Jansi。
+
+> 只有当系统配置和操作系统环境变量不包含加载的值时，才考虑Spring `Environment`环境。
 
 ## 5.5 国际化
 
+Spring Boot支持本地化消息，以便您的应用程序能够迎合不同语言需求的用户。默认情况下，Spring Boot会在类路径的根位置查找`messages`资源包。
+
+> 当配置的资源束的默认配置文件可用时（默认情况下为messages.properties），将应用自动配置。如果资源包只包含特定于语言的配置文件，则需要添加默认值。如果没有找到与任何配置的基本名称匹配的配置文件，则不会有自动配置的`MessageSource`。
+
+可以使用`spring.messages`命名空间配置资源包的基本名称以及其他几个属性，如下例所示：
+
+```properties
+spring.messages.basename=messages,config.i18n.messages
+spring.messages.fallback-to-system-locale=false
+```
+
+> spring.messages.basename支持逗号分隔的位置列表，可以是包限定符，也可以是从类路径根解析的资源。
+
+有关更多支持的选项，请参阅[MessageSourceProperties](https://github.com/spring-projects/spring-boot/tree/v3.0.2/spring-boot-project/spring-boot-autoconfigure/src/main/java/org/springframework/boot/autoconfigure/context/MessageSourceProperties.java)。
+
 ## 5.6  JSON
+
+Spring Boot提供了与三个JSON映射库的集成：
+
+- Gson
+- Jackson
+- JSON-B
+
+Jackson是首选和默认库。
+
+### 5.6.1 Jackson
+
+提供了Jackson的自动配置，Jackson是`spring-boot-starter-json`的一部分。当Jackson在类路径上时，会自动配置`ObjectMapper` bean。提供了几个配置，用于[自定义ObjectMapper的配置](https://docs.spring.io/spring-boot/docs/3.0.2/reference/htmlsingle/#howto.spring-mvc.customize-jackson-objectmapper)。
+
+#### 自定义序列化和反序列化
+
+如果使用Jackson序列化和反序列化JSON数据，您可能需要编写自己的`JsonSerializer`和`JsonDeserializer`类。自定义序列化，通常使用[模块化注册](https://github.com/FasterXML/jackson-docs/wiki/JacksonHowToCustomSerializers)。Spring Boot提供了另一种`@JsonComponent`注解，使直接注册Spring Beans变得更容易。
+
+你能使用`@JsonComponent`注解在`JsonSerializer`, `JsonDeserializer` 或`KeyDeserializer` 实现上。您还可以在包含序列化程序/反序列化程序作为内部类的类上使用它，如下例所示：
+
+```java
+import java.io.IOException;
+
+import com.fasterxml.jackson.core.JsonGenerator;
+import com.fasterxml.jackson.core.JsonParser;
+import com.fasterxml.jackson.core.ObjectCodec;
+import com.fasterxml.jackson.databind.DeserializationContext;
+import com.fasterxml.jackson.databind.JsonDeserializer;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.JsonSerializer;
+import com.fasterxml.jackson.databind.SerializerProvider;
+
+import org.springframework.boot.jackson.JsonComponent;
+
+@JsonComponent
+public class MyJsonComponent {
+
+    public static class Serializer extends JsonSerializer<MyObject> {
+
+        @Override
+        public void serialize(MyObject value, JsonGenerator jgen, SerializerProvider serializers) throws IOException {
+            jgen.writeStartObject();
+            jgen.writeStringField("name", value.getName());
+            jgen.writeNumberField("age", value.getAge());
+            jgen.writeEndObject();
+        }
+
+    }
+
+    public static class Deserializer extends JsonDeserializer<MyObject> {
+
+        @Override
+        public MyObject deserialize(JsonParser jsonParser, DeserializationContext ctxt) throws IOException {
+            ObjectCodec codec = jsonParser.getCodec();
+            JsonNode tree = codec.readTree(jsonParser);
+            String name = tree.get("name").textValue();
+            int age = tree.get("age").intValue();
+            return new MyObject(name, age);
+        }
+
+    }
+
+}
+```
+
+`ApplicationContext`中的所有`@JsonComponent` bean都会自动向Jackson注册。因为`@JsonComponent`是用`@Component`元注释的，所以通常的组件扫描规则适用。
+
+Spring Boot还提供了[JsonObjectSerializer](https://github.com/spring-projects/spring-boot/tree/v3.0.2/spring-boot-project/spring-boot/src/main/java/org/springframework/boot/jackson/JsonObjectSerializer.java)和[JsonObjectDeserializer](https://github.com/spring-projects/spring-boot/tree/v3.0.2/spring-boot-project/spring-boot/src/main/java/org/springframework/boot/jackson/JsonObjectDeserializer.java)基类，这些基类在序列化对象时为标准Jackson版本提供了有用的替代方案。有关详细信息，请参阅Javadoc中的JsonObjectSerializer和JsonObjectDeserializer。
+
+上面的示例可以重写为使用JsonObjectSerializer/JsonObjectDeserializer，如下所示：
+
+```java
+import java.io.IOException;
+
+import com.fasterxml.jackson.core.JsonGenerator;
+import com.fasterxml.jackson.core.JsonParser;
+import com.fasterxml.jackson.core.ObjectCodec;
+import com.fasterxml.jackson.databind.DeserializationContext;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.SerializerProvider;
+
+import org.springframework.boot.jackson.JsonComponent;
+import org.springframework.boot.jackson.JsonObjectDeserializer;
+import org.springframework.boot.jackson.JsonObjectSerializer;
+
+@JsonComponent
+public class MyJsonComponent {
+
+    public static class Serializer extends JsonObjectSerializer<MyObject> {
+
+        @Override
+        protected void serializeObject(MyObject value, JsonGenerator jgen, SerializerProvider provider)
+                throws IOException {
+            jgen.writeStringField("name", value.getName());
+            jgen.writeNumberField("age", value.getAge());
+        }
+
+    }
+
+    public static class Deserializer extends JsonObjectDeserializer<MyObject> {
+
+        @Override
+        protected MyObject deserializeObject(JsonParser jsonParser, DeserializationContext context, ObjectCodec codec,
+                JsonNode tree) throws IOException {
+            String name = nullSafeValue(tree.get("name"), String.class);
+            int age = nullSafeValue(tree.get("age"), Integer.class);
+            return new MyObject(name, age);
+        }
+
+    }
+
+}
+```
+
+#### 混合
+
+Jackson支持混合可以用于将附加注释混合到目标类上已经声明的注释中。Spring Boot的Jackson自动配置将扫描应用程序的包，查找用`@JsonMixin`注释的类，并将它们注册到自动配置的ObjectMapper中。注册由Spring Boot的`JsonMixinModule`执行。
+
+### 5.6.2 Gson
+
+提供了Gson的自动配置。当Gson在类路径上时，会自动配置Gson bean。提供了几个`spring.gson.*`配置来定制配置。要获得更多控制，可以使用一个或多个`GsonBuilderCustomizer` bean。
+
+### 5.6.3 JSON-B
+
+提供JSON-B的自动配置。当JSON-B API和实现位于类路径上时，将自动配置`Jsonb` bean。首选的JSON-B实现是`Eclipse Yasson`，它提供了依赖性管理。
 
 ## 5.7 任务执行和调度
 

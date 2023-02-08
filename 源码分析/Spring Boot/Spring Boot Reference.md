@@ -2628,13 +2628,108 @@ spring.profiles.group.production[1]=prodmq
 
 ## 5.4 日志
 
+Spring Boot使用[Commons Logging](https://commons.apache.org/logging)进行所有内部日志记录，但底层日志实现保持打开状态。默认配置提供了[Java Util Logging](https://docs.oracle.com/javase/8/docs/api/java/util/logging/package-summary.html), [Log4J2](https://logging.apache.org/log4j/2.x/), 和 [Logback](https://logback.qos.ch/)。在每种情况下，记录器都预先配置为使用控制台输出，也可以使用可选的文件输出。
+
+默认情况下，如果使用“Starters”，则使用Logback进行日志记录。还包括适当的Logback路由，以确保使用Java Util Logging、Commons Logging、Log4J或SLF4J的依赖库都能正常工作。
+
+> Java有很多可用的日志框架。如果上面的列表看起来令人困惑，请不要担心。通常，您不需要更改日志依赖关系，Spring Boot默认值也可以正常工作。
+>
+> 当您将应用程序部署到servlet容器或应用程序服务器时，使用JavaUtil Logging API执行的日志记录不会路由到应用程序的日志中。这将防止容器或已部署到容器的其他应用程序执行的日志记录出现在应用程序的日志中。
+
 ### 5.4.1 日志格式化
+
+Spring Boot的默认日志输出类似于以下示例：
+
+```
+2023-01-19 14:18:28.678  INFO 16676 --- [           main] o.s.b.d.f.s.MyApplication                : Starting MyApplication using Java 1.8.0_362 on myhost with PID 16676 (/opt/apps/myapp.jar started by myuser in /opt/apps/)
+2023-01-19 14:18:28.686  INFO 16676 --- [           main] o.s.b.d.f.s.MyApplication                : No active profile set, falling back to 1 default profile: "default"
+2023-01-19 14:18:30.656  INFO 16676 --- [           main] o.s.b.w.embedded.tomcat.TomcatWebServer  : Tomcat initialized with port(s): 8080 (http)
+2023-01-19 14:18:30.672  INFO 16676 --- [           main] o.apache.catalina.core.StandardService   : Starting service [Tomcat]
+2023-01-19 14:18:30.672  INFO 16676 --- [           main] org.apache.catalina.core.StandardEngine  : Starting Servlet engine: [Apache Tomcat/9.0.71]
+2023-01-19 14:18:30.756  INFO 16676 --- [           main] o.a.c.c.C.[Tomcat].[localhost].[/]       : Initializing Spring embedded WebApplicationContext
+2023-01-19 14:18:30.757  INFO 16676 --- [           main] w.s.c.ServletWebServerApplicationContext : Root WebApplicationContext: initialization completed in 1977 ms
+2023-01-19 14:18:31.328  INFO 16676 --- [           main] o.s.b.w.embedded.tomcat.TomcatWebServer  : Tomcat started on port(s): 8080 (http) with context path ''
+2023-01-19 14:18:31.339  INFO 16676 --- [           main] o.s.b.d.f.s.MyApplication                : Started MyApplication in 3.552 seconds (JVM running for 4.101)
+```
+
+输出以下项目：
+
+- 日期和时间：毫秒级精度和易于排序的
+- Log级别：`ERROR`, `WARN`, `INFO`, `DEBUG`, 或者 `TRACE`
+- 进程ID
+- --- 分隔符，用于区分实际的日志消息开头
+- 线程名称：用方括号括起来（可能会被控制台输出截断）
+- Logger 名称：通常是源类名（通常是缩写）
+- 日志消息
+
+> Logback没有`FATAL`级别。它被映射到`ERROR`。
 
 ### 5.4.2 Console 输出
 
+默认日志配置在写入消息时将消息回显到控制台。默认情况下，记录ERROR级别、WARN级别和INFO级别消息。您还可以通过使用`--debug`标志启动应用程序来启用“调试”模式。
+
+```
+$ java -jar myapp.jar --debug
+```
+
+> 您还可以在`application.properties`中指定`debug=true`。
+
+启用调试模式后，将配置一组核心记录器（嵌入式容器、Hibernate和Spring Boot）以输出更多信息。启用调试模式使用debug级别不会将应用程序配置为记录所有消息。
+
+或者，您可以通过使用`--trace`标志（或应用程序配置中的`trace=true`）来启动应用程序“trace”模式，这样做可以为一些核心记录器（嵌入式容器、Hibernate模式生成和整个Spring组合）启用跟踪日志记录。
+
 #### 彩色输出
 
+如果您的终端支持ANSI，则使用颜色输出来提高可读性。您可以将`spring.output.ansi.enabled`设置为支持的值，以覆盖自动检测。
+
+通过使用%clr转换字配置颜色编码。在最简单的形式中，转换器根据日志级别为输出着色，如下例所示：
+
+```
+%clr(%5p)
+```
+
+下表描述了日志级别到颜色的映射：
+
+| Level   | Color  |
+| :------ | :----- |
+| `FATAL` | Red    |
+| `ERROR` | Red    |
+| `WARN`  | Yellow |
+| `INFO`  | Green  |
+| `DEBUG` | Green  |
+| `TRACE` | Green  |
+
+或者，您可以通过将其作为转换选项来指定应使用的颜色或样式。例如，要使文本变为黄色，请使用以下设置：
+
+```
+%clr(%d{yyyy-MM-dd HH:mm:ss.SSS}){yellow}
+```
+
+支持以下颜色和样式：
+
+- `blue`
+- `cyan`
+- `faint`
+- `green`
+- `magenta`
+- `red`
+- `yellow`
+
 ### 5.4.3 文件输出
+
+默认情况下，Spring Boot只记录到控制台，不写入日志文件。如果要在控制台输出之外写入日志文件，你需要设置`logging.file.name`或者`logging.file.path`。
+
+下表显示了`logging.*`如何一起使用：
+
+| `logging.file.name` | `logging.file.path` | Example    | Description                                                  |
+| :------------------ | :------------------ | :--------- | :----------------------------------------------------------- |
+| *(none)*            | *(none)*            |            | 仅仅在控制台输出                                             |
+| Specific file       | *(none)*            | `my.log`   | 写入指定的日志文件。名称可以是确切的位置或相对于当前目录。   |
+| *(none)*            | Specific directory  | `/var/log` | 将`spring.log`写入指定目录。名称可以是确切的位置或相对于当前目录。 |
+
+日志文件在达到10MB时会重头开始，与控制台输出一样，默认情况下会记录ERROR级别、WARN级别和INFO级别的消息。
+
+> 日志记录配置独立于实际的日志记录基础结构。因此，特定的配置键（如`logback.configurationFile` for logback）不会由springBoot管理。
 
 ### 5.4.4 文件周期
 

@@ -3099,15 +3099,93 @@ Jackson支持混合可以用于将附加注释混合到目标类上已经声明�
 
 ## 5.7 任务执行和调度
 
+在上下文中缺少`Executor` bean的情况下，Spring Boot 自动配置`ThreadPoolTaskExecutor`，并使用可自动关联到异步任务执行（`@EnableAsync`）和Spring MVC异步请求处理的合理默认值。
+
+> 常规任务执行（即`@EnableAsync`）将透明地使用它，但不会配置Spring MVC支持，因为它需要`AsyncTaskExecutor`实现（名为`applicationTaskExecutor`）。根据您的目标安排，您可以将Executor更改为ThreadPoolTaskExecutor，或者同时定义`ThreadPoolTaskExecutor`和`AsyncConfigurer`来包装自定义Executor。
+>
+> 自动配置的`TaskExecutorBuilder`允许您轻松创建复制默认情况下自动配置的实例。
+
+线程池使用8个核心线程，可以根据负载增长和收缩。可以使用`spring.task.execution`命名空间对这些默认设置进行微调，如下例所示：
+
+```properties
+spring.task.execution.pool.max-size=16
+spring.task.execution.pool.queue-capacity=100
+spring.task.execution.pool.keep-alive=10s
+```
+
+这将更改线程池以使用有界队列，这样当队列已满（100个任务）时，线程池将增加到最多16个线程。当线程空闲10秒（而不是默认情况下的60秒）时，会回收线程，因此池的收缩更为积极。
+
+如果需要将`ThreadPoolTaskScheduler`与计划的任务执行相关联（例如使用`@EnableScheduling`），也可以自动配置`ThreadPoolTaskScheduler`。线程池默认使用一个线程，其设置可以使用`spring.task.scheduling`进行微调，如下例所示：
+
+```properties
+spring.task.scheduling.thread-name-prefix=scheduling-
+spring.task.scheduling.pool.size=2
+```
+
+如果需要创建自定义执行器或调度程序，则在上下文中可以使用`TaskExecutorBuilder` bean和`TaskSchedulerBuilder` bean。
+
+> 笔者注：TaskExecutorBuilder 和 TaskSchedulerBuilder 能通过Bean 注入，最终创建的Bean 为 ThreadPoolTaskExecutor
+
 ## 5.8 测试
+
+Spring Boot提供了许多实用程序和注解，以帮助测试应用程序。测试支持由两个模块提供：`spring-boot-test`包含核心项目，`spring-boot-test-autoconfigure`支持自动配置。
+
+大多数开发者使用`spring-boot-starter-test`开始，它导入了两个Spring Boot测试模块以及JUnit Jupiter、AssertJ、Hamcrest和许多其他有用的库。
+
+> 如果您有使用JUnit4的测试，可以使用JUnit5引擎来运行它们，按以下示例添加`junit-vintage-engine`依赖
+>
+> ```xml
+> <dependency>
+>     <groupId>org.junit.vintage</groupId>
+>     <artifactId>junit-vintage-engine</artifactId>
+>     <scope>test</scope>
+>     <exclusions>
+>         <exclusion>
+>             <groupId>org.hamcrest</groupId>
+>             <artifactId>hamcrest-core</artifactId>
+>         </exclusion>
+>     </exclusions>
+> </dependency>
+> ```
 
 ### 5.8.1 测试范围依赖
 
+`spring-boot-starter-test` 的`Starter`（test scope）包含如下库：
+
+- [JUnit 5](https://junit.org/junit5/):  Java单元测试的实际标准
+- [Spring Test](https://docs.spring.io/spring-framework/docs/5.3.25/reference/html/testing.html#integration-testing) & Spring Boot Test: Spring Boot应用程序的实用程序和集成测试支持
+- [AssertJ](https://assertj.github.io/doc/):  断言库
+- [Hamcrest](https://github.com/hamcrest/JavaHamcrest): 匹配器对象库（也称为约束或谓词
+- [Mockito](https://site.mockito.org/): Java模拟框架.
+- [JSONassert](https://github.com/skyscreamer/JSONassert): JSON断言库
+- [JsonPath](https://github.com/jayway/JsonPath): JSON适用的XPath
+
+我们通常发现这些公共库在编写测试时很有用。如果这些库不符合您的需要，您可以添加自己的附加测试依赖项。
+
 ### 5.8.2 测试Spring 应用程序
+
+依赖注入的一个主要优点是它应该使代码更容易进行单元测试。您可以使用new操作符实例化对象，而不需要使用Spring，也可是使用`mock`对象。
+
+通常需要集成测试而不是单元测试（在Spring ApplicationContext中）。Spring 框架包括这样的集成测试模块，你可以直接依赖`org.springframework:spring-test`或者使用`spring-boot-starter-test`。
+
+如果您以前没有使用过spring测试模块，那么应该首先阅读[spring Framework参考文档](https://docs.spring.io/spring-framework/docs/5.3.25/reference/html/testing.html#testing)的相关部分。
 
 ### 5.8.3 测试Spring Boot 应用程序
 
+Spring Boot应用程序是一个Spring ApplicationContext，因此除了使用普通的Spring上下文进行测试外，无需进行任何特殊的测试。
+
+Spring Boot 提供 `@SpringBootTest`注解，当您需要Spring Boot特性时，它可以作为标准spring test `@ContextConfiguration`注释的替代。注释的工作原理是通过[SpringApplication创建测试中使用的ApplicationContext](https://docs.spring.io/spring-boot/docs/2.7.8/reference/htmlsingle/#features.testing.spring-boot-applications.detecting-configuration)。除了`@SpringBootTest`之外，还提供了许多其他注解来测试应用程序的[更具体的切片](https://docs.spring.io/spring-boot/docs/2.7.8/reference/htmlsingle/#features.testing.spring-boot-applications.autoconfigured-tests)。
+
 #### 检测Web应用程序类型
+
+默认的，`@SpringBootTest`不会启动一个服务，您可以使用@SpringBootTest的webEnvironment属性来进一步优化测试的运行方式：
+
+- `MOCK`(Default) : 加载一个web `ApplicationContext`并提供一个模拟的web环境。使用该注解时不会启动一个容器。如果在类路径上web 环境不可用，将创建一个非web环境的`ApplicationContext`。它可以与 [`@AutoConfigureMockMvc` 或者 `@AutoConfigureWebTestClient`](https://docs.spring.io/spring-boot/docs/2.7.8/reference/htmlsingle/#features.testing.spring-boot-applications.with-mock-environment) 一起使用，用来对web应用程序进行模拟测试。
+- `RANDOM_PORT`:加载`WebServerApplicationContext`并提供真实的web环境。嵌入服务器将启动和监听基于随机端口。
+- `DEFINED_PORT`: 加载`WebServerApplicationContext`并提供真实的web环境。嵌入式服务器启动并在定义的端口（基于application.properties）或默认端口8080上侦听。
+- `NONE`:使用SpringApplication加载ApplicationContext，但不提供任何web环境（模拟或其他）。
+
+> 如果您的测试是@Transactional，默认情况下，它会在每个测试方法结束时回滚事务。然而，当`RANDOM_PORT`或`DEFINED_PORT`一起使用时，实际会提供了一个真实的servlet环境，HTTP客户端和服务器在单独的线程中运行，在这种情况下，在服务器上启动的任何事务都不会回滚。
 
 #### 检测测试配置
 

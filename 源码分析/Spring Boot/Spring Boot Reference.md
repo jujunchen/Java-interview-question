@@ -4478,19 +4478,95 @@ com.mycorp.libx.autoconfigure.LibXWebAutoConfiguration
 
 ### 5.9.3 条件注解
 
+如果想要在自动配置类上，始终配置一个或多个`@Conditional`，那么最常用的是`@ConditionalOnMissingBean`注解。
 
+Spring Boot 包含许多的`@Conditional`注解，包括如下注解：
 
-#### Class条件
+- Class Conditions
+- Bean Conditions
 
-#### Bean 条件
+- Property Conditions
 
-#### Property 条件
+- Resource Conditions
 
-#### Resource 条件
+- Web Application Conditions
 
-#### Web Application 条件
+- SpEL Expression Conditions
 
-#### SpEL 表达式条件
+#### Class Conditions 
+
+`@ConditionalOnClass` 和 `@ConditionOnMissingClass` 注解允许根据指定类是否存在来加载`@Configuration`类。
+
+该机制不适用于`@Bean`方法，其中返回类型通常是condition 的target：在方法的condition应用之前，JVM将加载类和可能处理的方法引用，如果类不存在，这些方法引用将失败。
+
+为了处理这种情况，可以使用单独的`@Configuration`类来隔离condition，如下所示：
+
+```java
+import org.springframework.boot.autoconfigure.AutoConfiguration;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+
+@AutoConfiguration
+// Some conditions ...
+public class MyAutoConfiguration {
+
+    // Auto-configured beans ...
+
+    @Configuration(proxyBeanMethods = false)
+    @ConditionalOnClass(SomeService.class)
+    public static class SomeServiceConfiguration {
+
+        @Bean
+        @ConditionalOnMissingBean
+        public SomeService someService() {
+            return new SomeService();
+        }
+
+    }
+
+}
+```
+
+如果使用`@ConditionalOnClass`或者`@ConditionalOnMissingClass`作为元注解的一部分来编写自己的组合注解，则必须使用`name`引用类。
+
+#### Bean Conditions
+
+`@ConditionalOnBean` 和 `@ConditionalOnMissingBean` 注解会根据是否存在指定bean来判断是否加载 bean，使用`value`指定bean 的类型或者`name`指定bean 的名称，`search`属性允许你限制搜索bean时要考虑的ApplicationContext层次结构。
+
+当放置于@Bean上事，目标类型默认为方法的返回类型，如下所示：
+
+```java
+import org.springframework.boot.autoconfigure.AutoConfiguration;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+import org.springframework.context.annotation.Bean;
+
+@AutoConfiguration
+public class MyAutoConfiguration {
+
+    @Bean
+    @ConditionalOnMissingBean
+    public SomeService someService() {
+        return new SomeService();
+    }
+
+}
+```
+
+这个例子中，`someService`将在`SomeService` 类型的Bean 不在ApplicationContext中时创建。
+
+建议在自动配置类上只使用`@ConditionalOnBean` 和 `@ConditionalOnMissingBean`注解，因为这些注解能够保证是在 任何用户自定义bean 后加载的。
+
+在声明`@Bean`方法时，在方法的返回类型中提供尽可能多的类型信息，例如，如果您的bean的具体类实现了接口，那么bean 方法返回的类型应该是具体类而不是接口。
+
+#### Property Conditions
+
+#### Resource Conditions
+
+#### Web Application Conditions
+
+#### SpEL Expression Conditions
 
 ### 5.9.4 测试自动配置
 

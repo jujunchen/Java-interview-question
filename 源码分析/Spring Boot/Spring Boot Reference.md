@@ -4562,9 +4562,21 @@ public class MyAutoConfiguration {
 
 #### Property Conditions
 
+`@ConditionalOnProperty` 注解根据Spring Environment 是否包含指定配置进行加载。使用`prefix`和`name`指定要检查的属性，默认情况下匹配任何存在且不等于false的属性。另外可以使用`havingValue`和`matchIfMissing`属性创建高级检查。
+
+> 笔者注：
+>
+> `havingValue`  配置预期值（字符串形式），如果未指定，则属性不能等于false
+>
+> `matchIfMissing`  表示如果未设置属性，条件是否匹配，默认为false
+
 #### Resource Conditions
 
+`@ConditionalOnResource`注解仅在指定资源存在时才加载配置。可以使用常用的Spring 约定指定资源，比如`file:/home/user/test.dat`。
+
 #### Web Application Conditions
+
+`@ConditionalOnWebApplication` 和 `@ConditionalOnNotWebApplication`注解根据应用是否是一个"web应用"来判断是否加载配置。基于servlet 的 web 应用使用了Spring `WebApplicationContext`，定义了一个`session`生命周期或者有一个`ConfigurableWebEnvironment`，反应式的 web 应用程序使用`ReactiveWebApplicationContext`或者存在`ConfigurableReactiveWebEnvironment`。
 
 #### SpEL Expression Conditions
 

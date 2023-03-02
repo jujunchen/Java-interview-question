@@ -4680,7 +4680,60 @@ void serviceIsIgnoredIfLibraryIsNotPresent() {
 
 #### 命名
 
+给starter提供一个合适的命名空间，不要以`spring-boot`开头，即使使用不同的maven `groupId`。
+
 #### 配置键
+
+如果你的启动器提供配置键，请使用唯一的命名空间。不要使用Spring Boot 使用的键（如server、management、spring等），根据经验，应该在所有键上加上独有的命名空间，比如`acme`。
+
+```java
+import java.time.Duration;
+
+import org.springframework.boot.context.properties.ConfigurationProperties;
+
+@ConfigurationProperties("acme")
+public class AcmeProperties {
+
+    /**
+     * Whether to check the location of acme resources.
+     */
+    private boolean checkLocation = true;
+
+    /**
+     * Timeout for establishing a connection to the acme server.
+     */
+    private Duration loginTimeout = Duration.ofSeconds(3);
+
+    public boolean isCheckLocation() {
+        return this.checkLocation;
+    }
+
+    public void setCheckLocation(boolean checkLocation) {
+        this.checkLocation = checkLocation;
+    }
+
+    public Duration getLoginTimeout() {
+        return this.loginTimeout;
+    }
+
+    public void setLoginTimeout(Duration loginTimeout) {
+        this.loginTimeout = loginTimeout;
+    }
+
+}
+```
+
+
+
+这里是一些遵循的规则：
+
+- 不要以`The`或`A`开始
+- `boolean`类型，以`Whether`或者`Enable`开始
+- 列表类型，以“逗号分隔列表”开始(原文 Comma-separated list)
+- 使用`java.time.Duration`而不是`long`
+- 除非在运行时确认，否则不要提供默认值
+
+确保你生成了[Annotation Processor](https://docs.spring.io/spring-boot/docs/2.7.9/reference/htmlsingle/#appendix.configuration-metadata.annotation-processor)以便IDE的提示可用，可以在`META-INF/spring-configuration-metadata.json`查看生成的metadata，确保键已经被正确生成，然后在IDE中进行验证。
 
 #### 自动配置模块
 

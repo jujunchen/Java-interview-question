@@ -4578,13 +4578,103 @@ public class MyAutoConfiguration {
 
 `@ConditionalOnWebApplication` 和 `@ConditionalOnNotWebApplication`注解根据应用是否是一个"web应用"来判断是否加载配置。基于servlet 的 web 应用使用了Spring `WebApplicationContext`，定义了一个`session`生命周期或者有一个`ConfigurableWebEnvironment`，反应式的 web 应用程序使用`ReactiveWebApplicationContext`或者存在`ConfigurableReactiveWebEnvironment`。
 
+`@ConditionalOnWarDeployment`注解根据应用是否是传统的WAR应用来判断是否加载配置。对于使用嵌入式应用程序，该条件不会匹配。
+
 #### SpEL Expression Conditions
+
+`@ConditionalOnWarDeployment`注解根据[SpEL表达式](https://docs.spring.io/spring-framework/docs/5.3.25/reference/html/core.html#expressions)结果来判断是否加载配置。
+
+在表达式中引用bean将导致bean在上下文刷新处理中过早初始化，这将导致bean无法进行post-processing处理（比如配置绑定）并且状态可能是不完整的。
 
 ### 5.9.4 测试自动配置
 
+自动配置可能会受到许多因素的影响：用户配置(`@Bean`定义和自定义的`Environment`)、评估条件和其他的。每个测试都应该创建一个良好的`ApplicationContext`，表示这些自定义的组合，`ApplicationContextRunner`提供了实现这一点的好方法。
+
+`ApplicationContextRunner`通常定义为测试类的一个字段，用来收集基础的、公共配置。以下示例确保了`MyServiceAutoConfiguration`始终被调用。
+
+```java
+private final ApplicationContextRunner contextRunner = new ApplicationContextRunner()
+        .withConfiguration(AutoConfigurations.of(MyServiceAutoConfiguration.class));
+```
+
+如果定义了多个自动配置，则不需要对其声明排序，因为它们的调用顺序与应用程序的顺序完全相同。
+
+每个测试都可以使用runner来表示特定的用例。例如，下面的示例调用用户配置（UserConfiguration）并检查自动配置是否正确退出。`run`提供的回调上下文可以在`AssertJ`中使用。
+
+```java
+@Test
+void defaultServiceBacksOff() {
+    this.contextRunner.withUserConfiguration(UserConfiguration.class).run((context) -> {
+        assertThat(context).hasSingleBean(MyService.class);
+        assertThat(context).getBean("myCustomService").isSameAs(context.getBean(MyService.class));
+    });
+}
+
+@Configuration(proxyBeanMethods = false)
+static class UserConfiguration {
+
+    @Bean
+    MyService myCustomService() {
+        return new MyService("mine");
+    }
+
+}
+```
+
+还可以轻松自定义`Environment`，如下所示：
+
+```java
+@Test
+void serviceNameCanBeConfigured() {
+    this.contextRunner.withPropertyValues("user.name=test123").run((context) -> {
+        assertThat(context).hasSingleBean(MyService.class);
+        assertThat(context.getBean(MyService.class).getName()).isEqualTo("test123");
+    });
+}
+```
+
+runner 也能够用于显示`ConditionEvaluationReport`，这个报告可以在INFO 或 DEBUG级别打印。如下示例展示如何使用`ConditionEvaluationReportLoggingListener`在自动化测试中打印报告。
+
+```java
+import org.junit.jupiter.api.Test;
+
+import org.springframework.boot.autoconfigure.logging.ConditionEvaluationReportLoggingListener;
+import org.springframework.boot.logging.LogLevel;
+import org.springframework.boot.test.context.runner.ApplicationContextRunner;
+
+class MyConditionEvaluationReportingTests {
+
+    @Test
+    void autoConfigTest() {
+        new ApplicationContextRunner()
+            .withInitializer(new ConditionEvaluationReportLoggingListener(LogLevel.INFO))
+            .run((context) -> {
+                    // Test something...
+            });
+    }
+
+}
+```
+
+
+
 #### 模拟Web上下文
 
+如果你仅需要在servlet 或者 reactive 上下文测试自动化配置，你可以使用`WebApplicationContextRunner`或者`ReactiveWebApplicationContextRunner`。
+
 #### 覆盖类路径
+
+还可以在运行时测试特定的包或类是否存在，Spring Boot 附带了一个`FilteredClassLoader`，以下示例断言`MyService`不存在时，自动配置将禁用。
+
+```java
+@Test
+void serviceIsIgnoredIfLibraryIsNotPresent() {
+    this.contextRunner.withClassLoader(new FilteredClassLoader(MyService.class))
+            .run((context) -> assertThat(context).doesNotHaveBean("myService"));
+}
+```
+
+
 
 ### 5.9.5 创建自己的Starter
 

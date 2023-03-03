@@ -4737,13 +4737,115 @@ public class AcmeProperties {
 
 #### 自动配置模块
 
+`autoconfigure`模块包含任何必要的启动库，可能也包含配置键定义（比如`ConfigurationProperties`）。
+
+你应该将对库的依赖标记为可选，这样就可以更容易地将自动配置模块包含在你的项目中。
+
+Spring Boot 使用注释处理器从`META-INF/spring-autoconfigure-metadata.properties`中收集自动配置条件。如果存在该文件，则可以在早期过滤不匹配的自动配置，这有助于提高启动时间。
+
+当用maven构建的时候，推荐添加如下的依赖到模块中：
+
+```xml
+<dependency>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-autoconfigure-processor</artifactId>
+    <optional>true</optional>
+</dependency>
+
+```
+
+如果已经在应用程序中直接定义了自动配置，确保`spring-boot-maven-plugin`已经配置，防止repackage 将依赖重新打包到fat jar中。
+
+```xml
+<project>
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+                <configuration>
+                    <excludes>
+                        <exclude>
+                            <groupId>org.springframework.boot</groupId>
+                            <artifactId>spring-boot-autoconfigure-processor</artifactId>
+                        </exclude>
+                    </excludes>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>
+```
+
+使用Gradle,应该添加`annotationProcessor`配置，如下所示：
+
+```xml
+dependencies {
+    annotationProcessor "org.springframework.boot:spring-boot-autoconfigure-processor"
+}
+```
+
 #### Starter模块
+
+starter确实是一个空jar，它只提供一些必要的依赖项。
 
 ## 5.10 Kotlin Support
 
 略
 
 # 6. Web
+
+Spring Boot 非常适合开发Web应用程序，可以使用Tomcat、Jetty、Undertow 或 Netty 作为HTTP服务器，基于servlet的应用程序使用`spring-boot-starter-web`模块，响应式的Web应用程序使用`spring-boot-starter-webflux`。
+
+## 6.1 Servlet Web 应用
+
+如果你想要构建基于servlet的web应用，可以利用Spring Boot 给Spring MVC 或者 Jersey提供的自动配置。
+
+### 6.1.1 Spring Web MVC Framework
+
+#### Spring MVC 自动配置
+
+#### HttpMessageConverters
+
+#### MessageCodesResolver
+
+#### 静态内容
+
+#### 欢迎页
+
+#### 自定义Favicon
+
+#### 路径匹配和内容协商
+
+#### ConfigurableWebBindingInitializer
+
+#### 模板引擎
+
+#### 错误处理
+
+#### CORS支持
+
+### 6.1.2 JAX-RS 和 Jersey
+
+### 6.1.3 嵌入式Servlet容器支持
+
+## 6.2 响应式Web应用
+
+### 6.2.1 Spring WebFlux Framework
+
+### 6.2.2 嵌入式响应服务支持
+
+### 6.2.3 响应式服务资源配置
+
+## 6.3 优雅关机
+
+## 6.4 Spring Security
+
+## 6.5 Spring Session
+
+## 6.6 Spring for GraphQL
+
+## 6.7 Spring HATEOAS
 
 # 7. Data
 

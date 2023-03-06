@@ -4997,6 +4997,8 @@ spring.web.resources.chain.strategy.fixed.version=v12
 
 #### 欢迎页
 
+Spring Boot 支持静态和模板欢迎页面，它首先在配置的静态内容位置中查找index.html文件，如果找不到，会查找index模板，如果找到，它会自动用作应用程序的欢迎页。
+
 #### 自定义Favicon
 
 #### 路径匹配和内容协商

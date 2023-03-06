@@ -4803,13 +4803,197 @@ Spring Boot 非常适合开发Web应用程序，可以使用Tomcat、Jetty、Und
 
 ### 6.1.1 Spring Web MVC Framework
 
+Spring MVC 允许你创建特定的@Controller 或 @RestController Bean来处理传入的HTTP请求。控制器中的方法通过使用``@RequestMapping`注解映射到HTTP。
+
+如下示例显示了一个典型的提供JSON 数据的`@RestController`例子：
+
+```java
+import java.util.List;
+
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+@RestController
+@RequestMapping("/users")
+public class MyRestController {
+
+    private final UserRepository userRepository;
+
+    private final CustomerRepository customerRepository;
+
+    public MyRestController(UserRepository userRepository, CustomerRepository customerRepository) {
+        this.userRepository = userRepository;
+        this.customerRepository = customerRepository;
+    }
+
+    @GetMapping("/{userId}")
+    public User getUser(@PathVariable Long userId) {
+        return this.userRepository.findById(userId).get();
+    }
+
+    @GetMapping("/{userId}/customers")
+    public List<Customer> getUserCustomers(@PathVariable Long userId) {
+        return this.userRepository.findById(userId).map(this.customerRepository::findByUser).get();
+    }
+
+    @DeleteMapping("/{userId}")
+    public void deleteUser(@PathVariable Long userId) {
+        this.userRepository.deleteById(userId);
+    }
+
+}
+```
+
+
+
 #### Spring MVC 自动配置
+
+自动配置在Spring的默认配置之上添加了以下功能：
+
+- 包含`ContentNegotiatingViewResolver` Bean 和 `BeanNameViewResolver`Bean
+- 支持服务静态资源，包括支持WebJars（后续介绍）
+- 自动注册`Converter`、`GenericConverter`、`Formatter` Bean
+- 支持`HttpMessageConverters`（后续介绍）
+- 自动注册`MessageCodesResolver`(后续介绍)
+- 静态`index.html`支持
+- 自动使用`ConfigurableWebBindingInitializer` bean (后续介绍)
+
+如果你想保留这些Spring Boot MVC 的自定义功能，并进行更多的MVC自定义（拦截器、格式化、视图控制器等），你可以添加自己的`WebMvcConfigurer`类型的`@Configuration`类，但不需要添加`@EnableWebMvc`。
+
+如果想提供`RequestMappingHandlerMapping`、`RequestMappingHandlerAdapter`或`ExceptionHandlerExceptionResolver`的自定义实例，并保留Spring Boot MVC自定义，您可以声明`WebMvcRegistrations`类型的bean，并使用它来提供这些组件的自定义实例。
+
+如果想完全控制Spring MVC，您可以添加您自己的`@Configuration`用`@EnableWebMvc`注解，或者添加您自己的`@Configuration`-annotated `DelegatingWebMvcConfiguration`，如`@EnableWebMvc`的Javadoc中所述。
+
+Spring MVC使用的`ConversionService`与用于从`application.properties`或`application.yaml`文件中转换值的服务不同。这意味着`Period`、`Duration`和`DataSize`转换器不可用，`@DurationUnit`和`@DataSizeUnit`注释将被忽略。
+
+如果您想定制Spring MVC使用的`ConversionService`，可以提供带有addFormatters方法的`WebMvcConfigurer` bean。通过此方法，您可以注册任何您喜欢的转换器，也可以委托给`ApplicationConversionService`上可用的静态方法。
+
+> 笔者注：
+>
+> Spring MVC自动配置由`spring-boot-autoconfigure`依赖中的`WebMvcAutoConfiguration`类加载
+>
+> `ContentNegotiatingViewResolver`的配置
+>
+> ```java
+> @Bean
+> @ConditionalOnBean(ViewResolver.class)
+> @ConditionalOnMissingBean(name = "viewResolver", value = ContentNegotiatingViewResolver.class)
+> public ContentNegotiatingViewResolver viewResolver(BeanFactory beanFactory) {
+>     ContentNegotiatingViewResolver resolver = new ContentNegotiatingViewResolver();
+>     resolver.setContentNegotiationManager(beanFactory.getBean(ContentNegotiationManager.class));
+>     // ContentNegotiatingViewResolver 使用其他视图解析器来定位视图，所以应该具有较高的优先级
+>     reso lver.setOrder(Ordered.HIGHEST_PRECEDENCE);
+>     return resolver;
+> }
+> ```
+>
+> ContentNegotiatingViewResolver 本身不解析视图，而是委托给其他的viewResolver
+>
+> `BeanNameViewResolver`的配置
+>
+> ```java
+> @Bean
+> @ConditionalOnBean(View.class)
+> @ConditionalOnMissingBean
+> public BeanNameViewResolver beanNameViewResolver() {
+>     BeanNameViewResolver resolver = new BeanNameViewResolver();
+>     resolver.setOrder(Ordered.LOWEST_PRECEDENCE - 10);
+>     return resolver;
+> }
+> ```
+>
+> BeanNameViewResolver 用于将视图名称解析为上下文中的bean
+>
+> `WebMvcRegistrations` 是一个接口，可以注册WebMvcConfigurationSupport的关键注解，以此来覆盖Spring MVC提供的默认组件
+>
+> `ConversionService` 类型转换的服务接口
+
+
 
 #### HttpMessageConverters
 
+Spring MVC 使用`HttpMessageConverter`接口来转换HTTP请求和响应，开箱即用。例如，对象可以自动转换为JSON或XML(使用Jackson XML 扩展，如果不可用使用JAXB)，默认情况下，字符串使用`UTF-8`编码。
+
+如果需要自定义转换器，可以使用Spring Boot 的 `HttpMessageConverters`类，如下所示：
+
+```java
+import org.springframework.boot.autoconfigure.http.HttpMessageConverters;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.http.converter.HttpMessageConverter;
+
+@Configuration(proxyBeanMethods = false)
+public class MyHttpMessageConvertersConfiguration {
+
+    @Bean
+    public HttpMessageConverters customConverters() {
+        HttpMessageConverter<?> additional = new AdditionalHttpMessageConverter();
+        HttpMessageConverter<?> another = new AnotherHttpMessageConverter();
+        return new HttpMessageConverters(additional, another);
+    }
+
+}
+```
+
+在上下文中存在的任何`HttpMessageConverter`都会添加到转换器列表中，可以用同样的方式覆盖默认转换器。
+
 #### MessageCodesResolver
 
+Spring MVC 有一个策略来生成错误代码，用于从绑定的错误中渲染错误消息：`MessageCodesResolver`。如果你设置了`spring.mvc.message-codes-resolver-format`属性`PREFIX_ERROR_CODE`或者`POSTFIX_ERROR_CODE`，Spring Boot 会自动创建一个。
+
 #### 静态内容
+
+默认的，Spring Boot 提供静态内容的路径是类路径的`/static`或`/public`或`/resources`或`/META-INF/resources`或者`ServletContext`的根目录。它使用Spring MVC的`ResourceHttpRequestHandler`处理, 也可以通过添加自己的`WebMvcConfigurer`并覆盖`addResourceHandlers`方法来修改。
+
+在独立的web应用程序中，容器的默认servlet未启用，可以使用`server.servlet.register-default-servlet`属性启用。
+
+默认servlet充当回退，如果Spring决定不处理它，则从`ServletContext`的根目录中提供内容。大多数时候，这种情况不会发生（除非您修改默认的MVC配置），因为Spring始终可以通过`DispatcherServlet`处理请求。
+
+默认情况下，资源映射在`/**`上，但您可以使用`spring.mvc.static-path-pattern`属性进行调整。例如，将所有资源迁移到`/resources/**`可以以下操作：
+
+```properties
+spring.mvc.static-path-pattern=/resources/**
+```
+
+您还可以使用`spring.web.resources.static-locations`属性自定义静态资源位置（将默认值替换为目录位置列表）。根servlet上下文路径`"/"`也会自动添加为位置。
+
+除了前面提到的“标准”静态资源位置外，还为Webjars 内容做了兼容，如果打包，任何`/webjars/**`的路径资源将从jar文件中获取。
+
+> 如果你的应用程序被打包为jar，请勿使用`/src/main/webapp`目录，因为会被忽略，虽然此目录是一个常见的标准，但它仅用于war 打包。
+
+Spring Boot 还支持Spring MVC 提供的高级资源处理功能，比如缓存破坏或为Webjars提供与版本无关的URL。
+
+要使用Webjars的版本无关URL，添加`webjars-locator-core`依赖项，然后声明Webjar。以jQuery为例，添加`"/webjars/jquery/jquery.min.js"`结合会变成`"/webjars/jquery/x.y.z/jquery.min.js"`，其中`x.y.z`是Webjar版本。
+
+> 如果使用的是JBoss，你需要声明`webjars-locator-jboss-vfs`依赖项，而不是`webjars-locator-core`，否则所有的Webjars 会解析为404。
+
+通过在URL中添加散列值，使静态资源缓存破坏，以下配置为所有静态资源都不被缓存，比如`<link href="/css/spring-2a2d595e6ed9a0b24f027f2b63b134d6.css"/>`。
+
+```properties
+spring.web.resources.chain.strategy.content.enabled=true
+spring.web.resources.chain.strategy.content.paths=/**
+```
+
+由于为Thymelaf和FreeMarker自动配置了ResourceUrlEncodingFilter，资源链接在运行时会在模板中重写。使用JSP时，您应该手动声明此过滤器。目前不自动支持其他模板引擎，但可以使用自定义模板macros/helpers和使用[ResourceUrlProvider](https://docs.spring.io/spring-framework/docs/5.3.25/javadoc-api/org/springframework/web/servlet/resource/ResourceUrlProvider.html)。
+
+"fixed"策略可以在不更改文件名的情况下载URL中添加静态版本字符串，如下所示：
+
+```properties
+spring.web.resources.chain.strategy.content.enabled=true
+spring.web.resources.chain.strategy.content.paths=/**
+spring.web.resources.chain.strategy.fixed.enabled=true
+spring.web.resources.chain.strategy.fixed.paths=/js/lib/
+spring.web.resources.chain.strategy.fixed.version=v12
+```
+
+通过这样的配置，JavaScript模块定位`/js/lib/`下的资源使用`fixed`策略（`/v12/js/lib/mymodule.js`），而其他资源依然使用内容策略(`<link href="/css/spring-2a2d595e6ed9a0b24f027f2b63b134d6.css"/>`)。
+
+查看[`WebProperties.Resources`](https://github.com/spring-projects/spring-boot/tree/v2.7.9/spring-boot-project/spring-boot-autoconfigure/src/main/java/org/springframework/boot/autoconfigure/web/WebProperties.java),获取更多支持的选项。
+
+> 此功能已在一篇专门的[博客文章](https://spring.io/blog/2014/07/24/spring-framework-4-1-handling-static-web-resources)和Spring Framework的[参考文档](https://docs.spring.io/spring-framework/docs/5.3.25/reference/html/web.html#mvc-config-static-resources)中进行了详尽的描述。
 
 #### 欢迎页
 
@@ -4874,4 +5058,6 @@ Spring Boot 非常适合开发Web应用程序，可以使用Tomcat、Jetty、Und
 # 15. "How-to" 指南
 
 # 附录
+
+
 

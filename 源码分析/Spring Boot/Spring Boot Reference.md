@@ -5054,7 +5054,7 @@ spring.mvc.pathmatch.matching-strategy=path-pattern-parser
 
 #### ConfigurableWebBindingInitializer
 
-
+Spring MVC 使用`WebBindingInitializer`为特定的请求初始化`WebDataBinder`。如果你创建自己的`ConfigurableWebBindingInitializer` Bean，Spring Boot 会自动配置Spring MVC 使用它。
 
 #### 模板引擎
 

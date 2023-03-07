@@ -5001,9 +5001,60 @@ Spring Boot 支持静态和模板欢迎页面，它首先在配置的静态内�
 
 #### 自定义Favicon
 
+跟其他的静态资源一样，Spring Boot 会在配置的静态内容位置检查`favicon.ico`,如果存在这样的文件，它会自动用作应用程序的图标。
+
 #### 路径匹配和内容协商
 
+Spring MVC 可以通过请求路径并将其与应用程序中定义的映射（如，控制器上的`@GetMapping`注解）来将传入的HTTP请求映射到处理程序。
+
+Spring Boot 默认是禁用后缀匹配模式的，像`"GET /projects/spring-boot.json"`这样的地址不会跟`@GetMapping("/projects/spring-boot")`匹配。该功能主要用于不会发送正确的"Accept"头的HTTP客户端。
+
+对于始终不会发送正确的 "Accept"头的客户端，可以不使用后缀匹配，而是使用查询参数，比如`GET /projects/spring-boot?format=json` 将映射到`@GetMapping("/projects/spring-boot")`。
+
+```properties
+spring.mvc.contentnegotiation.favor-parameter=true
+```
+
+或者使用不同的参数名称：
+
+````properties
+spring.mvc.contentnegotiation.favor-parameter=true
+spring.mvc.contentnegotiation.parameter-name=myparam
+````
+
+大多数媒体类型都支持开箱即用，但也可以定义新的媒体类型。
+
+```properties
+spring.mvc.contentnegotiation.media-types.markdown=text/markdown
+```
+
+后缀匹配模式已被弃用，并将在未来版本中删除，如果仍然希望使用后缀匹配模式，则需要以下配置：
+
+```properties
+spring.mvc.contentnegotiation.favor-path-extension=true
+spring.mvc.pathmatch.use-suffix-pattern=true
+```
+
+或者，与打开所有后缀模式相比，只支持注册的后缀模式更安全：
+
+```properties
+spring.mvc.contentnegotiation.favor-path-extension=true
+spring.mvc.pathmatch.use-registered-suffix-pattern=true
+```
+
+从Spring Framework 5.3开始，Spring MVC支持几种将请求路径与控制器处理程序匹配的实现策略。它以前只支持AntPathMatcher策略，但现在还提供`PathPatternParser`。Spring Boot现在提供了一个配置属性来选择新策略：
+
+```properties
+spring.mvc.pathmatch.matching-strategy=path-pattern-parser
+```
+
+有关此实现的更多详细信息，参考该[博客文章](https://spring.io/blog/2020/06/30/url-matching-with-pathpattern-in-spring-mvc)。
+
+`PathPatternParser`是一个优化的实现，但限制了[某些路径模式变体](https://docs.spring.io/spring-framework/docs/5.3.25/reference/html/web.html#mvc-ann-requestmapping-uri-templates)的使用，并且与后缀模式匹配（`spring.mvc.pathmatch.use-suffix-pattern`，`spring.mvc.pathmatch.use-registered-suffix-pattern`）或将`DispatcherServlet`映射为servlet前缀（`spring.mvc.servlet.path`）。
+
 #### ConfigurableWebBindingInitializer
+
+
 
 #### 模板引擎
 

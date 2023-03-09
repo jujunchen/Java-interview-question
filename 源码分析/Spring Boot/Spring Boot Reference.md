@@ -5192,6 +5192,8 @@ public class MyErrorViewResolver implements ErrorViewResolver {
 
 还可以是用常规的 [`@ExceptionHandler`](https://docs.spring.io/spring-framework/docs/5.3.25/reference/html/web.html#mvc-exceptionhandlers) 和 [`@ControllerAdvice`](https://docs.spring.io/spring-framework/docs/5.3.25/reference/html/web.html#mvc-ann-controller-advice) 特性，然后`ErrorController`会处理
 
+##### Spring MVC 之外映射错误页
+
 #### CORS支持
 
 ### 6.1.2 JAX-RS 和 Jersey

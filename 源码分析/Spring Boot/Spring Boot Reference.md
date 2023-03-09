@@ -5058,7 +5058,139 @@ Spring MVC 使用`WebBindingInitializer`为特定的请求初始化`WebDataBinde
 
 #### 模板引擎
 
+Spring MVC 支持多种模板技术，包括Thymeleaf、FreeMarker和JSP。
+
+- [FreeMarker](https://freemarker.apache.org/docs/)
+- [Groovy](https://docs.groovy-lang.org/docs/next/html/documentation/template-engines.html#_the_markuptemplateengine)
+- [Thymeleaf](https://www.thymeleaf.org/)
+- [Mustache](https://mustache.github.io/)
+
+避免使用JSP，在跟嵌入式servelt容器使用的时候存在一些已知问题。
+
+使用其中一个模板引擎的默认配置，模板自动从`src/main/resources/templates`获取。
+
 #### 错误处理
+
+默认情况下，Spring Boot 提供一个`/error`映射，以合理的方式处理所有错误，在servlet容器中它注册为一个"global"错误页。它会在机器客户端产生一个JSON响应包括error、Http状态和异常信息。对于浏览器客户端，会产生一个"whitelabel"错误视图，以HTML格式展现相同的数据（自定义的话，添加一个`Vuew`来解决`error`）。
+
+可以通过多个`server.error`属性来自定义默认错误处理行为。更多配置[查看附录](https://docs.spring.io/spring-boot/docs/2.7.8/reference/htmlsingle/#appendix.application-properties.server)。
+
+要完全替换默认的行为，可以实现`ErrorController`并注册为`Bean`或者添加`ErrorAttributes`类型的bean替换内容。
+
+你也可以用`@ControllerAdvice`来定制JSON文本或异常类型，如下所示：
+
+```java
+import javax.servlet.RequestDispatcher;
+import javax.servlet.http.HttpServletRequest;
+
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.ControllerAdvice;
+import org.springframework.web.bind.annotation.ExceptionHandler;
+import org.springframework.web.bind.annotation.ResponseBody;
+import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExceptionHandler;
+
+@ControllerAdvice(basePackageClasses = SomeController.class)
+public class MyControllerAdvice extends ResponseEntityExceptionHandler {
+
+    @ResponseBody
+    @ExceptionHandler(MyException.class)
+    public ResponseEntity<?> handleControllerException(HttpServletRequest request, Throwable ex) {
+        HttpStatus status = getStatus(request);
+        return new ResponseEntity<>(new MyErrorBody(status.value(), ex.getMessage()), status);
+    }
+
+    private HttpStatus getStatus(HttpServletRequest request) {
+        Integer code = (Integer) request.getAttribute(RequestDispatcher.ERROR_STATUS_CODE);
+        HttpStatus status = HttpStatus.resolve(code);
+        return (status != null) ? status : HttpStatus.INTERNAL_SERVER_ERROR;
+    }
+
+}
+```
+
+该示例中，如果`MyException`是由`SomeController`所在的包抛出的异常，使用`MyErrorBody` POJO的JSON代替`ErrorAttributes`的表示。
+
+在一些情况下，控制器级别处理的错误不会被度量指标记录，通过将处理的异常设置为请求属性，应用程序可以确保此类异常与请求度量一起记录。
+
+```java
+import javax.servlet.http.HttpServletRequest;
+
+import org.springframework.boot.web.servlet.error.ErrorAttributes;
+import org.springframework.stereotype.Controller;
+import org.springframework.web.bind.annotation.ExceptionHandler;
+
+@Controller
+public class MyController {
+
+    @ExceptionHandler(CustomException.class)
+    String handleCustomException(HttpServletRequest request, CustomException ex) {
+        request.setAttribute(ErrorAttributes.ERROR_ATTRIBUTE, ex);
+        return "errorView";
+    }
+
+}
+```
+
+##### 自定义错误页
+
+如果要显示一个给定状态码的自定义HTML错误页，可以将文件添加到`/error`目录。错误页面可以是静态HTML（即，添加到任何静态资源目录下）或者使用模版构建，文件名应该是确切状态代码或序列掩码。
+
+例如，要将404映射到静态HTML文件，结构如下：
+
+```text
+src/
+ +- main/
+     +- java/
+     |   + <source code>
+     +- resources/
+         +- public/
+             +- error/
+             |   +- 404.html
+             +- <other public assets>
+```
+
+使用FreeMark模板映射所有5xx错误，结构如下：
+
+```text
+src/
+ +- main/
+     +- java/
+     |   + <source code>
+     +- resources/
+         +- templates/
+             +- error/
+             |   +- 5xx.ftlh
+             +- <other templates>
+```
+
+对于更复杂的映射，可以添加实现`ErrorViewResolver`接口的bean，如下：
+
+```java
+import java.util.Map;
+
+import javax.servlet.http.HttpServletRequest;
+
+import org.springframework.boot.autoconfigure.web.servlet.error.ErrorViewResolver;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.servlet.ModelAndView;
+
+public class MyErrorViewResolver implements ErrorViewResolver {
+
+    @Override
+    public ModelAndView resolveErrorView(HttpServletRequest request, HttpStatus status, Map<String, Object> model) {
+        // Use the request or status to optionally return a ModelAndView
+        if (status == HttpStatus.INSUFFICIENT_STORAGE) {
+            // We could add custom model values here
+            new ModelAndView("myview");
+        }
+        return null;
+    }
+
+}
+```
+
+还可以是用常规的 [`@ExceptionHandler`](https://docs.spring.io/spring-framework/docs/5.3.25/reference/html/web.html#mvc-exceptionhandlers) 和 [`@ControllerAdvice`](https://docs.spring.io/spring-framework/docs/5.3.25/reference/html/web.html#mvc-ann-controller-advice) 特性，然后`ErrorController`会处理
 
 #### CORS支持
 

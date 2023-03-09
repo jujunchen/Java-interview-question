@@ -5194,11 +5194,168 @@ public class MyErrorViewResolver implements ErrorViewResolver {
 
 ##### Spring MVC 之外映射错误页
 
+对于不使用Spring MVC的应用程序，可以使用`ErrorPageRegistrar`接口直接注册`ErrorPages`。此抽象直接与底层的嵌入式servlet容器一起使用，即使没有Spring MVC DispatcherServlet 也是有效的。
+
+```java
+import org.springframework.boot.web.server.ErrorPage;
+import org.springframework.boot.web.server.ErrorPageRegistrar;
+import org.springframework.boot.web.server.ErrorPageRegistry;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpStatus;
+
+@Configuration(proxyBeanMethods = false)
+public class MyErrorPagesConfiguration {
+
+    @Bean
+    public ErrorPageRegistrar errorPageRegistrar() {
+        return this::registerErrorPages;
+    }
+
+    private void registerErrorPages(ErrorPageRegistry registry) {
+        registry.addErrorPages(new ErrorPage(HttpStatus.BAD_REQUEST, "/400"));
+    }
+
+}
+```
+
+如果注册了一个`ErrorPage`,其路径最终由`Filter`处理（这在一些非Spring Web框架中很常见，如Jersey和Wicket），那么`Filter`必须明确注册为`ERROR`调度器，如以下示例所示：
+
+```java
+import java.util.EnumSet;
+
+import javax.servlet.DispatcherType;
+
+import org.springframework.boot.web.servlet.FilterRegistrationBean;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+
+@Configuration(proxyBeanMethods = false)
+public class MyFilterConfiguration {
+
+    @Bean
+    public FilterRegistrationBean<MyFilter> myFilter() {
+        FilterRegistrationBean<MyFilter> registration = new FilterRegistrationBean<>(new MyFilter());
+        // ...
+        registration.setDispatcherTypes(EnumSet.allOf(DispatcherType.class));
+        return registration;
+    }
+
+}
+```
+
+请注意，默认的`FilterRegistrationBean`不包括`ERROR`调度器类型。
+
+##### WAR部署中的错误处理
+
+当部署到servlet容器时，Spring Boot使用其错误页面过滤器将具有错误状态的请求转发到适当的错误页面。这是必要的，因为servlet规范没有提供用于注册错误页面的API。根据您部署WAR文件的容器以及应用程序使用的技术，可能需要一些额外的配置。
+
+只有在响应尚未提交的情况下，错误页面过滤器才能将请求转发到正确的错误页面。默认情况下，WebSphere Application Server 8.0及更高版本在成功完成servlet的服务方法后提交响应。您应该通过将`com.ibm.ws.webcontainer.invokeFlushAfterService`设置为`false`来禁用此行为。
+
+如果您正在使用Spring Security，并希望在错误页面中访问主体，则必须配置Spring Security的过滤器，以便在错误调度中调用。为此，请将`spring.security.filter.dispatcher-types`属性设置为`async, error, forward, request`。
+
 #### CORS支持
+
+[跨域资源共享](https://en.wikipedia.org/wiki/Cross-origin_resource_sharing)（CORS）是由[大多数浏览器](https://caniuse.com/#feat=cors)实现的[W3C规范](https://www.w3.org/TR/cors/)，允许您以灵活的方式指定哪种跨域请求被授权，而不是使用一些安全性较低且功能较弱的方法，如IFRAME或JSONP。
+
+从4.2版开始，Spring MVC支持CORS。在Spring Boot应用程序中使用带有`@CrossOrigin`注解的控制器方法，CORS不需要任何特定的配置。可以通过使用自定义的`addCorsMappings(CorsRegistry)`方法注册`WebMvcConfigurer ` bean来定义全局CORS配置，如下例所示：
+
+```java
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.web.servlet.config.annotation.CorsRegistry;
+import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
+
+@Configuration(proxyBeanMethods = false)
+public class MyCorsConfiguration {
+
+    @Bean
+    public WebMvcConfigurer corsConfigurer() {
+        return new WebMvcConfigurer() {
+
+            @Override
+            public void addCorsMappings(CorsRegistry registry) {
+                registry.addMapping("/api/**");
+            }
+
+        };
+    }
+
+}
+```
+
+
 
 ### 6.1.2 JAX-RS 和 Jersey
 
+如果您更喜欢REST端点的JAX-RS编程模型，您可以使用其中一个可用的实现，而不是Spring MVC。[Jersey](https://jersey.github.io/)和[Apache CXF](https://cxf.apache.org/)开箱即用。CXF要求您在应用程序上下文中将其`Servlet`或`Filter`注册为`@Bean`。Jersey有一些原生的Spring支持，因此我们还在Spring Boot中为其提供自动配置支持，以及启动器。
+
+要开始使用Jersey，请将`spring-boot-starter-jersey`作为依赖项，然后您需要一个类型`ResourceConfig`的`@Bean`，在其中注册所有端点，如以下示例所示：
+
+```java
+import org.glassfish.jersey.server.ResourceConfig;
+
+import org.springframework.stereotype.Component;
+
+@Component
+public class MyJerseyConfig extends ResourceConfig {
+
+    public MyJerseyConfig() {
+        register(MyEndpoint.class);
+    }
+
+}
+```
+
+Jersey对扫描可执行档案的支持相当有限。例如，当运行可执行的war文件时，它无法扫描[完全可执行的jar文件](https://docs.spring.io/spring-boot/docs/2.7.8/reference/htmlsingle/#deployment.installing)或`WEB-INF/classes`中找到的包中的端点。为了避免这种限制，不应使用`packages`方法，并且应使用`register`方法单独注册端点，如前例所示。
+
+对于更高级的自定义，您还可以注册任意数量的实现`ResourceConfigCustomizer`的bean。
+
+所有注册的端点都应该是带有HTTP资源注解的`@Components`(`@GET`等)，如以下示例所示：
+
+```java
+import javax.ws.rs.GET;
+import javax.ws.rs.Path;
+
+import org.springframework.stereotype.Component;
+
+@Component
+@Path("/hello")
+public class MyEndpoint {
+
+    @GET
+    public String message() {
+        return "Hello";
+    }
+
+}
+```
+
+由于`Endpoint`是Spring `@Component`，其生命周期由Spring管理，您可以使用`@Autowired`注释注入依赖项，并使用`@Value`注释注入外部配置。默认情况下，Jersey servlet被注册并映射到`/*`。您可以通过将`@ApplicationPath`添加到ResourceConfig`ResourceConfig`更改映射。
+
+默认情况下，Jersey在名为jerseyServletRegistrationBean类型的`@Bean`中设置为servlet，名为`jerseyServletRegistration`。默认情况下，servlet被懒惰地初始化，但您可以通过设置`spring.jersey.servlet.load-on-startup`来自定义该行为。您可以通过创建您自己的同名bean来禁用或覆盖该bean。您还可以通过设置`spring.jersey.type=filter`（在这种情况下，替换或覆盖isjerseyFilterRegistration的`@Bean`）来使用过滤器而不是servlet。过滤器有一个`@Order`，你可以用`spring.jersey.filter.order`进行设置。当使用Jersey作为过滤器时，必须存在一个servlet来处理任何没有被Jersey拦截的请求。如果您的应用程序不包含此类servlet，您可能希望通过将`server.servlet.register-default-servlet`设置为`true`来启用默认servlet。servlet和过滤器注册都可以通过使用`spring.jersey.init.*`指定属性映射来提供init参数。
+
 ### 6.1.3 嵌入式Servlet容器支持
+
+对于servlet应用程序，Spring Boot包括对嵌入式[Tomcat](https://tomcat.apache.org/)、[Jetty](https://www.eclipse.org/jetty/)和[Undertow](https://github.com/undertow-io/undertow)服务器的支持。大多数开发人员使用适当的“Starter”来获取完全配置的实例。默认情况下，嵌入式服务器在port`8080`上监听HTTP请求。
+
+#### Servlet、过滤器和监听器
+
+使用嵌入式servlet容器时，您可以通过使用Springbean或扫描servlet组件，从servlet规范中注册servlet、过滤器和所有侦听器（如`HttpSessionListener`）。
+
+#### 将Servlet、过滤器和监听器注册为Spring Beans
+
+任何作为Spring bean的`Servlet`、`Filter`或servlet`*Listener`实例都注册在嵌入式容器中。如果您想在配置期间引用`application.properties`中的值，这可能会特别方便。
+
+默认情况下，如果上下文仅包含单个Servlet，则将其映射到`/`。在多个servlet bean的情况下，bean名称用作路径前缀。过滤器映射到`/*`。
+
+如果基于约定的映射不够灵活，您可以使用`ServletRegistrationBean`、`FilterRegistrationBean`和`ServletListenerRegistrationBean`类进行完全控制。
+
+过滤bean不有序通常是安全的。如果需要指定顺序，您应该用`@Order`注解Filter或使其实现`Ordered`。您无法通过用`@Order`注解其bean方法来配置`Filter`的顺序。如果您无法将`Filter`类更改为添加`@Order`或实现`Ordered`，则必须为`Filter`定义FilterRegistrationBean，并使用`setOrder(int)`方法设置注册bean的顺序。避免配置在`Ordered.HIGHEST_PRECEDENCE`读取请求主体的过滤器，因为它可能与应用程序的字符编码配置相拢。如果servlet过滤器包装了请求，则应配置小于或等于`OrderedFilter.REQUEST_WRAPPER_FILTER_MAX_ORDER`的顺序。
+
+要查看应用程序中每个`Filter`的顺序，请为`web`[日志组](https://docs.spring.io/spring-boot/docs/2.7.8/reference/htmlsingle/#features.logging.log-groups)启用调试级别日志记录（`logging.level.web=debug`）。然后，将在启动时记录已注册过滤器的详细信息，包括其订单和URL模式。
+
+注册`Filter`bean时要小心，因为它们在应用程序生命周期的早期就被初始化了。如果您需要注册与其他bean交互的`Filter`，请考虑使用[`DelegatingFilterProxyRegistrationBean`](https://docs.spring.io/spring-boot/docs/2.7.8/api/org/springframework/boot/web/servlet/DelegatingFilterProxyRegistrationBean.html)。
 
 ## 6.2 响应式Web应用
 

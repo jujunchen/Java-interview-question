@@ -5357,9 +5357,392 @@ public class MyEndpoint {
 
 注册`Filter`bean时要小心，因为它们在应用程序生命周期的早期就被初始化了。如果您需要注册与其他bean交互的`Filter`，请考虑使用[`DelegatingFilterProxyRegistrationBean`](https://docs.spring.io/spring-boot/docs/2.7.8/api/org/springframework/boot/web/servlet/DelegatingFilterProxyRegistrationBean.html)。
 
+#### Servlet 上下文初始化
+
+嵌入式servlet容器不直接执行servlet 3.0+ `javax.servlet.ServletContainerInitializer`接口或Spring的`org.springframework.web.WebApplicationInitializer`接口。这是一个有意的设计决定，旨在降低在war中运行的第三方库可能破坏Spring Boot应用程序的风险。
+
+如果您需要在Spring Boot应用程序中执行servlet上下文初始化，您应该注册一个实现`org.springframework.boot.web.servlet.ServletContextInitializer`接口的bean。单一的`onStartup`方法提供对`ServletContext`的访问，如有必要，可以轻松用作现有`WebApplicationInitializer`的适配器。
+
+##### 扫描 Servlets、Filters和 listeners
+
+在嵌入式容器中，可以使用`@ServletComponentScan`开启`@WebServlet`, `@WebFilter`, 和 `@WebListener`注解的自动注册。
+
+> 在独立容器中，`@ServletComponentScan`没有效果，而是是使用的容器的内置发现机制
+
+#### ServletWebServerApplicationContext
+
+Spring Boot 底层使用不同类型的`ApplicationContext`来支持嵌入式servelt容器。`ServletWebServerApplicationContext`是一种特殊的`WebApplicationContext`，它通过搜索单个`ServletWebServerFactory` bean来自我引导。通常会自动配置`TomcatServletWebServerFactory`、`JettyServletWebServerFactory`或`UndertowServletWebServerFactory`。
+
+> 通常不需要了解这些实现类。大多数应用程序都是自动配置的，而且将根据你的要求创建适当的`ApplicationContext`和`ServletWebServerFactory`。
+
+ 在嵌入式容器设置中，ServletContext 在应用程序上下文初始化期间的服务器启动过程中设置。因为，`ApplicationContext`中的bean无法使用`ServletContext`可靠地初始化。解决这个问题的一种方法是将`ApplicationContext`作为bean的依赖项注入，并仅在需要时访问`ServletContext`。另一种方法是在服务器启动后使用回调。这可以使用`ApplicationListener`完成，它监听`ApplicationStartedEvent`，如下所示：
+
+```java
+import javax.servlet.ServletContext;
+
+import org.springframework.boot.context.event.ApplicationStartedEvent;
+import org.springframework.context.ApplicationContext;
+import org.springframework.context.ApplicationListener;
+import org.springframework.web.context.WebApplicationContext;
+
+public class MyDemoBean implements ApplicationListener<ApplicationStartedEvent> {
+
+    private ServletContext servletContext;
+
+    @Override
+    public void onApplicationEvent(ApplicationStartedEvent event) {
+        ApplicationContext applicationContext = event.getApplicationContext();
+        this.servletContext = ((WebApplicationContext) applicationContext).getServletContext();
+    }
+
+}
+```
+
+
+
+#### 自定义嵌入式Servelt容器
+
+可以使用Spring `Environment`属性配置常用的servlet容器设置。通常，您将在`application.properties`或`application.yaml`文件中定义属性。
+
+常见服务设置包括：
+
+-  网络设置：侦听来自HTTP请求的端口（server.port），绑定服务器的接口地址（server.address）等。
+- 会话设置：会话是否持久(`server.servlet.session.persistent`)，会话超时(`server.servlet.session.timeout`)，会话数据的位置（`server.servlet.session.store-dir`）,会话cookie配置（`server.servlet.session.cookie.*`）。
+- 错误管理：错误页面位置（`server.error.path`）等等。
+- [SSL](https://docs.spring.io/spring-boot/docs/2.7.8/reference/htmlsingle/#howto.webserver.configure-ssl)
+- [HTTP compression](https://docs.spring.io/spring-boot/docs/2.7.8/reference/htmlsingle/#howto.webserver.enable-response-compression)
+
+Spring Boot尽可能地暴露常见设置，但这并不总是可能的。 对于这些情况，专用名称空间提供特定服务器的定制（请参见`server.tomcat`和`server.undertow`）。 例如，可以使用嵌入式servlet容器的特定功能配置访问日志。
+
+> 有关完整列表，请参阅[`ServerProperties`](https://github.com/spring-projects/spring-boot/tree/v2.7.8/spring-boot-project/spring-boot-autoconfigure/src/main/java/org/springframework/boot/autoconfigure/web/ServerProperties.java)类。
+
+##### SameSite Cookies
+
+ 该SameSite cookie属性可由Web浏览器用于控制cookie在跨站点请求中是否提交，以及如何提交。当属性缺失时，该属性对于现代Web浏览器尤为重要，因为它们开始改变默认值。
+
+如果你想更改会话cookie的SameSite属性，你可以使用`server.servlet.session.cookie.same-site`属性。这个属性被自动配置的Tomcat、Jetty和Undertow服务器所支持。
+
+例如，如果您希望会话cookie具有`None`的`SameSite`属性，您可以将以下内容添加到您的`application.properties`或`application.yaml`文件中：
+
+```properties
+server.servlet.session.cookie.same-site=none
+```
+
+如果您想更改添加到`HttpServletResponse`的其他cookie上的`SameSite`属性，您可以使用`CookieSameSiteSupplier`。`CookieSameSiteSupplier`传递一个`Cookie`，并可能返回SameSite值或`null`。
+
+有许多便利的工厂和过滤器方法，可以快速匹配特定的 cookie。例如，添加以下 bean 将自动为名称与正则表达式 myapp.* 匹配的所有 cookie 应用 Lax 的 SameSite。
+
+```java
+import org.springframework.boot.web.servlet.server.CookieSameSiteSupplier;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+
+@Configuration(proxyBeanMethods = false)
+public class MySameSiteConfiguration {
+
+    @Bean
+    public CookieSameSiteSupplier applicationCookieSameSiteSupplier() {
+        return CookieSameSiteSupplier.ofLax().whenHasNameMatching("myapp.*");
+    }
+
+}
+```
+
+##### 程序化定制
+
+如果您需要以编程方式配置嵌入式servlet容器，您可以注册实现`WebServerFactoryCustomizer`接口的Spring Bean。`WebServerFactoryCustomizer`提供对`ConfigurableServletWebServerFactory`的访问，其中包括许多自定义设置方法。以下示例显示了以编程方式设置端口：
+
+```java
+import org.springframework.boot.web.server.WebServerFactoryCustomizer;
+import org.springframework.boot.web.servlet.server.ConfigurableServletWebServerFactory;
+import org.springframework.stereotype.Component;
+
+@Component
+public class MyWebServerFactoryCustomizer implements WebServerFactoryCustomizer<ConfigurableServletWebServerFactory> {
+
+    @Override
+    public void customize(ConfigurableServletWebServerFactory server) {
+        server.setPort(9000);
+    }
+
+}
+```
+
+`TomcatServletWebServerFactory`、`JettyServletWebSServerFactory`和`UndertowServletWebSrverFactory`是`ConfigurableServletWebServerFactory`的专用变体，它们分别为Tomcat、Jetty和Undertow提供了额外的自定义setter方法。以下示例显示了如何自定义`TomcatServletWebServerFactory`，以提供对Tomcat特定配置选项的访问：
+
+```java
+import java.time.Duration;
+
+import org.springframework.boot.web.embedded.tomcat.TomcatServletWebServerFactory;
+import org.springframework.boot.web.server.WebServerFactoryCustomizer;
+import org.springframework.stereotype.Component;
+
+@Component
+public class MyTomcatWebServerFactoryCustomizer implements WebServerFactoryCustomizer<TomcatServletWebServerFactory> {
+
+    @Override
+    public void customize(TomcatServletWebServerFactory server) {
+        server.addConnectorCustomizers((connector) -> connector.setAsyncTimeout(Duration.ofSeconds(20).toMillis()));
+    }
+
+}
+```
+
+##### 直接自定义ConfigurableServletWebServerFactory
+
+对于需要您从`ServletWebServerFactory`扩展的更高级用例，您可以自己公开此类类型的bean。
+
+为许多配置选项提供了设置器。如果您需要做一些更差异化的事情，还提供了几种受保护的方法“钩子”。有关详细信息，请参阅[源代码文档](https://docs.spring.io/spring-boot/docs/2.7.8/api/org/springframework/boot/web/servlet/server/ConfigurableServletWebServerFactory.html)。
+
+#### JSP限制
+
+当运行使用嵌入式servlet容器（并打包为可执行存档）的Spring Boot应用程序时，JSP支持有一些限制。
+
+- 有了Jetty和Tomcat，如果你使用war打包，它应该可以工作。当使用`java -jar`启动时，可执行war将起作用，也可以部署到任何标准容器中。使用可执行jar时不支持JSP。
+- Undertow不支持JSP。
+- 创建自定义`error.jsp`页面不会覆盖[错误处理](https://docs.spring.io/spring-boot/docs/2.7.8/reference/htmlsingle/#web.servlet.spring-mvc.error-handling)的默认视图。应使用[自定义错误页面](https://docs.spring.io/spring-boot/docs/2.7.8/reference/htmlsingle/#web.servlet.spring-mvc.error-handling.error-pages)。
+
 ## 6.2 响应式Web应用
 
+Spring Boot通过为Spring Webflux提供自动配置，简化了反应式Web应用程序的开发。
+
 ### 6.2.1 Spring WebFlux Framework
+
+Spring WebFlux是Spring Framework 5.0中引入的新反应式Web框架。与Spring MVC不同，它不需要servlet API，是完全异步和非阻塞的，并通过[Reactor项目](https://projectreactor.io/)实现[Reactive Streams](https://www.reactive-streams.org/)规范。
+
+Spring WebFlux 有两种形式：功能性的和基于注解的。基于注解的形式非常接近Spring MVC模型，如下所示：
+
+```java
+import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
+
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+@RestController
+@RequestMapping("/users")
+public class MyRestController {
+
+    private final UserRepository userRepository;
+
+    private final CustomerRepository customerRepository;
+
+    public MyRestController(UserRepository userRepository, CustomerRepository customerRepository) {
+        this.userRepository = userRepository;
+        this.customerRepository = customerRepository;
+    }
+
+    @GetMapping("/{userId}")
+    public Mono<User> getUser(@PathVariable Long userId) {
+        return this.userRepository.findById(userId);
+    }
+
+    @GetMapping("/{userId}/customers")
+    public Flux<Customer> getUserCustomers(@PathVariable Long userId) {
+        return this.userRepository.findById(userId).flatMapMany(this.customerRepository::findByUser);
+    }
+
+    @DeleteMapping("/{userId}")
+    public Mono<Void> deleteUser(@PathVariable Long userId) {
+        return this.userRepository.deleteById(userId);
+    }
+
+}
+```
+
+“WebFlux.fn”是功能变体，将路由配置与请求的实际处理分开，如以下示例所示：
+
+```java
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.http.MediaType;
+import org.springframework.web.reactive.function.server.RequestPredicate;
+import org.springframework.web.reactive.function.server.RouterFunction;
+import org.springframework.web.reactive.function.server.ServerResponse;
+
+import static org.springframework.web.reactive.function.server.RequestPredicates.accept;
+import static org.springframework.web.reactive.function.server.RouterFunctions.route;
+
+@Configuration(proxyBeanMethods = false)
+public class MyRoutingConfiguration {
+
+    private static final RequestPredicate ACCEPT_JSON = accept(MediaType.APPLICATION_JSON);
+
+    @Bean
+    public RouterFunction<ServerResponse> monoRouterFunction(MyUserHandler userHandler) {
+        return route()
+                .GET("/{user}", ACCEPT_JSON, userHandler::getUser)
+                .GET("/{user}/customers", ACCEPT_JSON, userHandler::getUserCustomers)
+                .DELETE("/{user}", ACCEPT_JSON, userHandler::deleteUser)
+                .build();
+    }
+
+}
+```
+
+```java
+import reactor.core.publisher.Mono;
+
+import org.springframework.stereotype.Component;
+import org.springframework.web.reactive.function.server.ServerRequest;
+import org.springframework.web.reactive.function.server.ServerResponse;
+
+@Component
+public class MyUserHandler {
+
+    public Mono<ServerResponse> getUser(ServerRequest request) {
+        ...
+    }
+
+    public Mono<ServerResponse> getUserCustomers(ServerRequest request) {
+        ...
+    }
+
+    public Mono<ServerResponse> deleteUser(ServerRequest request) {
+        ...
+    }
+
+}
+```
+
+WebFlux是Spring框架的一部分，详细信息可在其[参考文档](https://docs.spring.io/spring-framework/docs/5.3.25/reference/html/web-reactive.html#webflux-fn)中找到。
+
+您可以定义任意数量的`RouterFunction`bean，以模块化路由器的定义。如果您需要优先应用，可以对bean定义顺序。
+
+将`spring-boot-starter-webflux`模块添加到应用中以开始webflux。
+
+在应用程序中添加`spring-boot-starter-web`和`spring-boot-starter-webflux`模块会导致Spring Boot自动配置Spring MVC，而不是WebFlux。选择此行为是因为许多Spring开发人员将`spring-boot-starter-webflux`添加到他们的Spring MVC应用程序中以使用反应式`WebClient`。您仍然可以通过将所选应用程序类型设置为`SpringApplication.setWebApplicationType(WebApplicationType.REACTIVE)`强制执行您的选择。
+
+#### Spring WebFlux 自动配置
+
+Spring Boot为Spring WebFlux提供了自动配置，适用于大多数应用程序。
+
+自动配置在Spring的默认值之上添加了以下功能：
+
+- 为`HttpMessageReader`和`HttpMessageWriter`实例配置编解码器（[在本文档后面](https://docs.spring.io/spring-boot/docs/2.7.8/reference/htmlsingle/#web.reactive.webflux.httpcodecs)描述）。
+- 支持提供静态资源，包括支持WebJars（[在本文档后面](https://docs.spring.io/spring-boot/docs/2.7.8/reference/htmlsingle/#web.servlet.spring-mvc.static-content)描述）。
+
+如果您想保留Spring Boot WebFlux功能，并想添加额外的[WebFlux配置](https://docs.spring.io/spring-framework/docs/5.3.25/reference/html/web-reactive.html#webflux-config)，您可以添加自己的`WebFluxConfigurer`类型的`@Configuration`类，但**不要添加**`@EnableWebFlux`。
+
+如果想要完全控制Spring WebFlux，可以添加自己的`@Configuration`,并用`@EnableWebFlux`标注。
+
+#### 带有HttpMessageReaders和HttpMessageWriters的HTTP编解码器
+
+Spring WebFlux 使用`HttpMessageReader`和`HttpMessageWriter`接口来转换HTTP请求和响应。 他们使用 CodecConfigurer 配置了合理的默认值，这样就可以通过查看您的类路径中可用的库来实现。
+
+Spring Boot提供专用的编解码器配置属性`spring.codec.*`，它还通过使用`CodecCustomizer`实例来进一步自定义。例如，`spring.jackson.*`配置密钥应用于Jackson编解码器。
+
+如果您需要添加或自定义编解码器，您可以创建自定义`CodecCustomizer`组件，如以下示例所示：
+
+```java
+import org.springframework.boot.web.codec.CodecCustomizer;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.http.codec.ServerSentEventHttpMessageReader;
+
+@Configuration(proxyBeanMethods = false)
+public class MyCodecsConfiguration {
+
+    @Bean
+    public CodecCustomizer myCodecCustomizer() {
+        return (configurer) -> {
+            configurer.registerDefaults(false);
+            configurer.customCodecs().register(new ServerSentEventHttpMessageReader());
+            // ...
+        };
+    }
+
+}
+```
+
+您还可以利用[Boot的自定义JSON序列化器和反序列化器](https://docs.spring.io/spring-boot/docs/2.7.8/reference/htmlsingle/#features.json.jackson.custom-serializers-and-deserializers)。
+
+#### 静态内容
+
+默认情况下，Spring Boot从类路径中名为`/static`（或`/public`或`/resources`或`/META-INF/resources`）的目录提供静态内容。它使用Spring WebFlux中的`ResourceWebHandler`，以便您可以通过添加自己的`WebFluxConfigurer`并覆盖`addResourceHandlers`方法来修改该行为。
+
+默认情况下，资源映射在`/**`上，但您可以通过设置`spring.webflux.static-path-pattern`属性进行调整。例如，将所有资源迁移到`/resources/**`可以实现以下操作：
+
+```properties
+spring.webflux.static-path-pattern=/resources/**
+```
+
+您还可以使用`spring.web.resources.static-locations`自定义静态资源位置。这样做会将默认值替换为一个目录位置列表。如果您这样做，默认的欢迎页面检测将切换到您的自定义位置。因此，如果启动时您的任何位置都有一个`index.html`，那就是应用程序的主页。
+
+除了前面列出的“标准”静态资源位置外，[Webjars内容](https://www.webjars.org/)也有一个特殊情况。任何在`/webjars/**`具有路径的资源，如果以Webjars格式打包，则从jar文件提供。
+
+> Spring WebFlux应用程序并不严格依赖于servlet API，因此它们不能作为war文件部署，并且不使用`src/main/webapp`目录。
+
+#### 欢迎页
+
+Spring Boot支持静态和模板欢迎页面。它首先在配置的静态内容位置中查找`index.html`文件。如果找不到，它会查找`index`模板。如果找到任何一个，它会自动用作应用程序的欢迎页面。
+
+#### 模板引擎
+
+除了REST Web服务外，还可以使用Spring WebFlux提供动态HTML内容。Spring WebFlux支持各种模板技术，包括Thymeleaf、FreeMarker和Mustache。
+
+Spring Boot包括对以下模板引擎的自动配置支持：
+
+- [FreeMarker](https://freemarker.apache.org/docs/)
+- [Thymeleaf](https://www.thymeleaf.org/)
+- [Mustache](https://mustache.github.io/)
+
+当您使用这些模板引擎之一进行默认配置时，您的模板会自动从`src/main/resources/templates`挑选出来。
+
+#### 错误处理
+
+Spring Boot提供了一个`WebExceptionHandler`，以合理的方式处理所有错误。它在处理顺序中的位置紧接在WebFlux提供的处理程序之前，这些处理程序被认为是最后的。对于机器客户端，它会产生一个JSON响应，其中包含错误、HTTP状态和异常消息的详细信息。对于浏览器客户端，有一个“白页”错误处理程序，以HTML格式呈现相同的数据。您还可以提供自己的HTML模板来显示错误（请参阅[下一节](https://docs.spring.io/spring-boot/docs/2.7.8/reference/htmlsingle/#web.reactive.webflux.error-handling.error-pages)）。
+
+自定义此功能的第一步通常涉及使用现有机制，但替换或增强错误内容。为此，您可以添加`ErrorAttributes`类型的bean。
+
+要更改错误处理行为，您可以实现`ErrorWebExceptionHandler`并注册该类型的bean定义。由于`ErrorWebExceptionHandler`级别很低，Spring Boot还提供了一个方便的`AbstractErrorWebExceptionHandler`，让您以WebFlux功能方式处理错误，如以下示例所示：
+
+```java
+import reactor.core.publisher.Mono;
+
+import org.springframework.boot.autoconfigure.web.WebProperties.Resources;
+import org.springframework.boot.autoconfigure.web.reactive.error.AbstractErrorWebExceptionHandler;
+import org.springframework.boot.web.reactive.error.ErrorAttributes;
+import org.springframework.context.ApplicationContext;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
+import org.springframework.stereotype.Component;
+import org.springframework.web.reactive.function.server.RouterFunction;
+import org.springframework.web.reactive.function.server.RouterFunctions;
+import org.springframework.web.reactive.function.server.ServerRequest;
+import org.springframework.web.reactive.function.server.ServerResponse;
+import org.springframework.web.reactive.function.server.ServerResponse.BodyBuilder;
+
+@Component
+public class MyErrorWebExceptionHandler extends AbstractErrorWebExceptionHandler {
+
+    public MyErrorWebExceptionHandler(ErrorAttributes errorAttributes, Resources resources,
+            ApplicationContext applicationContext) {
+        super(errorAttributes, resources, applicationContext);
+    }
+
+    @Override
+    protected RouterFunction<ServerResponse> getRoutingFunction(ErrorAttributes errorAttributes) {
+        return RouterFunctions.route(this::acceptsXml, this::handleErrorAsXml);
+    }
+
+    private boolean acceptsXml(ServerRequest request) {
+        return request.headers().accept().contains(MediaType.APPLICATION_XML);
+    }
+
+    public Mono<ServerResponse> handleErrorAsXml(ServerRequest request) {
+        BodyBuilder builder = ServerResponse.status(HttpStatus.INTERNAL_SERVER_ERROR);
+        // ... additional builder calls
+        return builder.build();
+    }
+
+}
+```
+
+
 
 ### 6.2.2 嵌入式响应服务支持
 

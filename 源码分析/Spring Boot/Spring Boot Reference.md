@@ -5696,7 +5696,7 @@ Spring Boot包括对以下模板引擎的自动配置支持：
 
 Spring Boot提供了一个`WebExceptionHandler`，以合理的方式处理所有错误。它在处理顺序中的位置紧接在WebFlux提供的处理程序之前，这些处理程序被认为是最后的。对于机器客户端，它会产生一个JSON响应，其中包含错误、HTTP状态和异常消息的详细信息。对于浏览器客户端，有一个“白页”错误处理程序，以HTML格式呈现相同的数据。您还可以提供自己的HTML模板来显示错误（请参阅[下一节](https://docs.spring.io/spring-boot/docs/2.7.8/reference/htmlsingle/#web.reactive.webflux.error-handling.error-pages)）。
 
-自定义此功能的第一步通常涉及使用现有机制，但替换或增强错误内容。为此，您可以添加`ErrorAttributes`类型的bean。
+自定义此功能的第一步通常涉及使用现有机制，替换或增强错误内容的话，您可以添加`ErrorAttributes`类型的bean。
 
 要更改错误处理行为，您可以实现`ErrorWebExceptionHandler`并注册该类型的bean定义。由于`ErrorWebExceptionHandler`级别很低，Spring Boot还提供了一个方便的`AbstractErrorWebExceptionHandler`，让您以WebFlux功能方式处理错误，如以下示例所示：
 
@@ -5742,15 +5742,188 @@ public class MyErrorWebExceptionHandler extends AbstractErrorWebExceptionHandler
 }
 ```
 
+如果要获取完整的视图，还可以直接继承`DefaultErrorWebExceptionHandler`，覆盖其指定的方法。
 
+在某些情况下，[指标基础设施](https://docs.spring.io/spring-boot/docs/2.7.8/reference/htmlsingle/#actuator.metrics.supported.spring-webflux)不会记录在控制器或处理程序函数级别处理的错误。应用程序可以通过将处理的异常设置为请求属性来确保将此类异常记录在请求指标中：
+
+```java
+import org.springframework.boot.web.reactive.error.ErrorAttributes;
+import org.springframework.stereotype.Controller;
+import org.springframework.web.bind.annotation.ExceptionHandler;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.reactive.result.view.Rendering;
+import org.springframework.web.server.ServerWebExchange;
+
+@Controller
+public class MyExceptionHandlingController {
+
+    @GetMapping("/profile")
+    public Rendering userProfile() {
+        // ...
+        throw new IllegalStateException();
+    }
+
+    @ExceptionHandler(IllegalStateException.class)
+    public Rendering handleIllegalState(ServerWebExchange exchange, IllegalStateException exc) {
+        exchange.getAttributes().putIfAbsent(ErrorAttributes.ERROR_ATTRIBUTE, exc);
+        return Rendering.view("errorView").modelAttribute("message", exc.getMessage()).build();
+    }
+
+}
+```
+
+##### 自定义错误页面
+
+如果您想显示给定状态代码的自定义HTML错误页面，您可以将文件添加到`/error`目录中。错误页面可以是静态HTML（即在任何静态资源目录下添加）或使用模板构建。文件的名称应该是确切的状态代码或系列掩码。
+
+例如，要将`404`映射到静态HTML文件，您的目录结构如下：
+
+```text
+src/
+ +- main/
+     +- java/
+     |   + <source code>
+     +- resources/
+         +- public/
+             +- error/
+             |   +- 404.html
+             +- <other public assets>
+
+```
+
+要使用Mustache模板映射所有`5xx`错误，您的目录结构如下：
+
+```text
+src/
+ +- main/
+     +- java/
+     |   + <source code>
+     +- resources/
+         +- templates/
+             +- error/
+             |   +- 5xx.mustache
+             +- <other templates>
+```
+
+##### Web Filters
+
+Spring WebFlux提供了一个`WebFilter`接口，可以实现过滤HTTP请求-响应交换。在应用程序上下文中找到的`WebFilter`将自动用于过滤每个交换。
+
+过滤器的顺序很重要，可以通过实现`Ordered`或用`@Order`注解，Spring Boot 可以提供自动配置Web Filters，此时，将使用如下提供的顺序：
+
+| Web Filter                              | Order                            |
+| :-------------------------------------- | :------------------------------- |
+| `MetricsWebFilter`                      | `Ordered.HIGHEST_PRECEDENCE + 1` |
+| `WebFilterChainProxy` (Spring Security) | `-100`                           |
+| `HttpTraceWebFilter`                    | `Ordered.LOWEST_PRECEDENCE - 10` |
 
 ### 6.2.2 嵌入式响应服务支持
 
+Spring Boot包括对以下嵌入式反应式网络服务器的支持：Reactor Netty、Tomcat、Jetty和Undertow。大多数开发人员使用适当的“Starter”来获取完整配置的实例。默认情况下，嵌入式服务器监听端口8080上的HTTP请求。
+
 ### 6.2.3 响应式服务资源配置
+
+当自动配置Reactor Netty或Jetty服务器时，Spring Boot将创建特定的bean，向服务器实例提供HTTP资源：`ReactorResourceFactory`或`JettyResourceFactory`。
+
+默认情况下，这些资源也将与Reactor Netty和Jetty客户端共享，以获得最佳性能，给定：
+
+- 相同的技术用于服务器和客户端
+- 客户端实例是使用Spring Boot自动配置的`WebClient.Builder` bean构建的
+
+开发人员可以通过提供自定义`ReactorResourceFactory`或`JettyResourceFactory` bean来覆盖Jetty和ReactorNetty的资源配置，应用于客户端和服务器。
+
+您可以在[WebClient Runtime部分](https://docs.spring.io/spring-boot/docs/2.7.8/reference/htmlsingle/#io.rest-client.webclient.runtime)了解有关客户端资源配置的更多信息。
 
 ## 6.3 优雅关机
 
+所有四个嵌入式Web服务器（Jetty、Reactor Netty、Tomcat和Undertow）以及反应式和基于servlet的Web应用程序都支持优雅关机。它作为关闭应用程序上下文的一部分发生，并在停止`SmartLifecycle`的最早阶段执行。此停止处理使用超时，该超时提供了一个宽限期，在此期间，现有请求将被允许完成，但不允许新的请求。不允许新请求的确切方式因正在使用的网络服务器而异。Jetty、Reactor Netty和Tomcat将停止在网络层接受请求。Undertow将接受请求，但立即响应服务不可用（503）响应。
+
+> Tomcat的优雅关机需要Tomcat 9.0.33或更高版本。
+
+要启用优雅关机，请配置`server.shutdown`属性，如以下示例所示：
+
+```properties
+server.shutdown=graceful
+```
+
+要配置超时期，请配置`spring.lifecycle.timeout-per-shutdown-phase`属性，如以下示例所示：
+
+```properties
+spring.lifecycle.timeout-per-shutdown-phase=20s
+```
+
+> 如果IDE没有发送正确的`SIGTERM`信号，那么在IDE中使用优雅的关机可能无法正常工作。有关更多详细信息，请参阅您的IDE文档。
+
 ## 6.4 Spring Security
+
+如果[Spring Security](https://spring.io/projects/spring-security)在类路径上，那么Web应用程序默认情况下是安全的。Spring Boot依靠Spring Security的内容协商策略来决定是使用`httpBasic`还是`formLogin`。要向Web应用程序添加方法级安全性，您还可以使用所需的设置添加`@EnableGlobalMethodSecurity`。更多信息可以在[Spring Security参考指南](https://docs.spring.io/spring-security/reference/5.7.6/servlet/authorization/method-security.html)中找到。
+
+默认的`UserDetailsService`只有一个用户。用户名是`user`，密码是随机的，在应用程序启动时以WARN级别打印，如以下示例所示：
+
+```text
+Using generated security password: 78fa095d-3f4c-48b1-ad50-e24c31d5cf35
+
+This generated password is for development use only. Your security configuration must be updated before running your application in production.
+```
+
+> 如果您微调日志配置，请确保`org.springframework.boot.autoconfigure.security`类别设置为日志`WARN`级别的消息。否则，默认密码不会打印。
+
+可以使用`spring.security.user.name`和`spring.security.user.password`修改用户名和密码。
+
+默认情况下，您在Web应用程序中获得的基本功能是：
+
+- 具有内存存储的`UserDetailsService`（或`ReactiveUserDetailsService`，如果是WebFlux应用程序）bean和自动生成密码的单个用户（有关用户的属性，请参阅[`SecurityProperties.User`](https://docs.spring.io/spring-boot/docs/2.7.8/api/org/springframework/boot/autoconfigure/security/SecurityProperties.User.html)）。
+- 整个应用程序（如果actuator在类路径上，则包括actuator端点）的基于表单的登录或HTTP基本安全性（取决于请求中的`Accept`标头）。
+- 用于发布身份验证事件的`DefaultAuthenticationEventPublisher`。
+
+您可以通过为其添加bean来提供不同的`AuthenticationEventPublisher`。
+
+### MVC 安全
+
+默认安全配置在`SecurityAutoConfiguration`和`UserDetailsServiceAutoConfiguration`中实现。`SecurityAutoConfiguration`会导入用于web安全的`SpringBootWebSecurityConfiguration`和`UserDetailsServiceAutoConfiguration`用于配置身份验证，这也适用于非web应用程序。要完全关闭默认的Web应用程序安全配置或合并多个Spring Security组件，如OAuth2客户端和资源服务器，请添加`SecurityFilterChain`类型的bean（这样做不会禁用`UserDetailsService`配置或执行器的安全性）。
+
+要关闭`UserDetailsService`配置，您可以添加`UserDetailsService`、`AuthenticationProvider`或`AuthenticationManager`类型的bean。
+
+可以通过添加自定义`SecurityFilterChain`或`WebSecurityConfigurerAdapter`来覆盖访问规则。Spring Boot提供了方便的方法，可用于覆盖actuator端点和静态资源的访问规则。`EndpointRequest`可用于创建基于`management.endpoints.web.base-path`属性的`RequestMatcher`。`PathRequest`可用于为常用位置的资源创建`RequestMatcher`。
+
+### WebFlux 安全
+
+与Spring MVC应用程序类似，您可以通过添加`spring-boot-starter-security`依赖项来保护WebFlux应用程序。默认安全配置在`ReactiveSecurityAutoConfiguration`和`UserDetailsServiceAutoConfiguration`中实现。`ReactiveSecurityAutoConfiguration`导入`WebFluxSecurityConfiguration`用于Web安全，`UserDetailsServiceAutoConfiguration`配置身份验证，这也与非Web应用程序相关。要完全关闭默认的Web应用程序安全配置，您可以添加`WebFilterChainProxy`类型的bean（这样做不会禁用`UserDetailsService`配置或执行器的安全性）。
+
+要关闭`UserDetailsService`配置，您可以添加`ReactiveUserDetailsService`或`ReactiveAuthenticationManager`类型的bean。
+
+可以通过添加自定义`SecurityFilterChain`或`WebSecurityConfigurerAdapter` bean来覆盖访问规则。Spring Boot提供了方便的方法，可用于覆盖执行器端点和静态资源的访问规则。
+
+`EndpointRequest`可用于创建基于`management.endpoints.web.base-path`属性的RequestMatcher。PathRequest可用于为常用位置的资源创建RequestMatcher。
+
+例如，您可以通过添加以下内容来自定义安全配置：
+
+```java
+import org.springframework.boot.autoconfigure.security.reactive.PathRequest;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.security.config.web.server.ServerHttpSecurity;
+import org.springframework.security.web.server.SecurityWebFilterChain;
+
+import static org.springframework.security.config.Customizer.withDefaults;
+
+@Configuration(proxyBeanMethods = false)
+public class MyWebFluxSecurityConfiguration {
+
+    @Bean
+    public SecurityWebFilterChain springSecurityFilterChain(ServerHttpSecurity http) {
+        http.authorizeExchange((exchange) -> {
+            exchange.matchers(PathRequest.toStaticResources().atCommonLocations()).permitAll();
+            exchange.pathMatchers("/foo", "/bar").authenticated();
+        });
+        http.formLogin(withDefaults());
+        return http.build();
+    }
+
+}
+```
+
+
 
 ## 6.5 Spring Session
 

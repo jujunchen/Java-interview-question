@@ -46,9 +46,6 @@ Java知识库：https://www.yuque.com/lexiangqizhong/java
 
 ![image-20200627142356190](https://tva1.sinaimg.cn/large/007S8ZIlly1gg6tugktvgj30as0cc0tf.jpg)
 
-## 公众号
-
-<img src="https://tva1.sinaimg.cn/large/006tNbRwly1ga6zmqsc18j30ao0aoadi.jpg" alt="image-20191223213731596" style="zoom:50%;" />
 
 
 

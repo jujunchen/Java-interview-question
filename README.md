@@ -46,7 +46,7 @@ https://github.com/jujunchen/ebook
 
 #### 交流平台
 
-![阿提说说](https://tva1.sinaimg.cn/large/007S8ZIlly1ggv0xy8u89j305805675g.jpg)
+阿提说说：[阿提说说-CSDN博客](https://itsaysay.blog.csdn.net/)
 
 
 

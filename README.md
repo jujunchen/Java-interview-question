@@ -48,8 +48,8 @@ https://github.com/jujunchen/ebook
 
 阿提说说：[阿提说说-CSDN博客](https://itsaysay.blog.csdn.net/)
 
-面试测试智能体：豆包-https://doubao.com/bot/N9qq0Guc
-<img width="1874" height="1304" alt="image" src="https://github.com/user-attachments/assets/79208c72-28f6-4edd-804a-8ac7ee9bc9c0" />
+[面试测试智能体](https://doubao.com/bot/N9qq0Guc)：https://doubao.com/bot/N9qq0Guc， 分基础、高级、实践 进行测试
+
 
 
 

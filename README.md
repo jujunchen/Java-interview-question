@@ -48,7 +48,7 @@ https://github.com/jujunchen/ebook
 
 阿提说说：[阿提说说-CSDN博客](https://itsaysay.blog.csdn.net/)
 
-[面试测试智能体](https://doubao.com/bot/N9qq0Guc)：https://doubao.com/bot/N9qq0Guc， 分基础、高级、实践 进行测试
+[面试测试智能体](https://doubao.com/bot/N9qq0Guc)：https://doubao.com/bot/N9qq0Guc  分基础、高级、实践 进行测试
 
 
 
